@@ -267,7 +267,7 @@ bool InitAll(ProgramContext *ctx)
         return false;
     }
 
-    if(!SDL_CreateWindowAndRenderer("slideshow program", 800, 600, SDL_WINDOW_RESIZABLE, &ctx->window, &ctx->renderer)) {
+    if(!SDL_CreateWindowAndRenderer("template", 800, 600, SDL_WINDOW_RESIZABLE, &ctx->window, &ctx->renderer)) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create window and renderer: %s", SDL_GetError());
         return false;
     }
@@ -427,3 +427,4 @@ int main(int argc, char **argv)
     DeInitAll(&ctx);
     return 0;
 }
+
