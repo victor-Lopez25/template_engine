@@ -141,7 +141,7 @@ bool CompileApp(Nob_Cmd *cmd)
 
 int main(int argc, char **argv)
 {
-    //NOB_GO_REBUILD_URSELF(argc, argv);
+    NOB_GO_REBUILD_URSELF(argc, argv);
 
     const char *app_name = "template";
 
@@ -166,6 +166,7 @@ int main(int argc, char **argv)
     if(!CompileApp(&cmd)) return 1;
 
     if(hotreload) {
+        nob_mkdir_if_not_exists("hotreload");
         if(!ProgramAlreadyRunning(app_name)) {
             nob_cc(&cmd);
             nob_cc_output(&cmd, app_name);

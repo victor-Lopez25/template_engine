@@ -17,9 +17,9 @@
 # define DLL_EXT ".so"
 #endif
 
-#define DLL_DIR "bin/hotreload"
+#define DLL_DIR "hotreload"
 
-#define DLL_NAME "prog" DLL_EXT
+#define DLL_NAME "app" DLL_EXT
 
 typedef bool (*BoolVoidStarProc)(void*);
 typedef size_t (*MemorySizeProc)(void);
@@ -64,28 +64,29 @@ bool LoadProgramApi(ProgramApi *api, int version)
     bool ok = false;
     WIN32_FILE_ATTRIBUTE_DATA ignore;
 
-    if(!GetFileAttributesEx(LOCK_FILE_NAME, GetFileExInfoStandard, &ignore) &&
-       GetLastWriteTime(DLL_NAME, &api->modificationTime))
-    {
-        size_t mark = nob_temp_save();
-        char *dllname = nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, version);
-        nob_temp_rewind(mark);
-        CopyFile(DLL_NAME, dllname, FALSE);
-        
-        api->library = LoadLibraryA(dllname);
-        if(api->library)
-        {
-            api->initAll = (BoolVoidStarProc)GetProcAddress(api->library, "InitAll");
-            api->initPartial = (BoolVoidStarProc)GetProcAddress(api->library, "InitPartial");
-            api->deInitAll = (VoidStarProc)GetProcAddress(api->library, "DeInitAll");
-            api->deInitPartial = (VoidStarProc)GetProcAddress(api->library, "DeInitPartial");
-            
-            api->memorySize = (MemorySizeProc)GetProcAddress(api->library, "MemorySize");
-            api->mainLoop = (BoolVoidStarProc)GetProcAddress(api->library, "MainLoop");
+    if(!GetFileAttributesExA(LOCK_FILE_NAME, GetFileExInfoStandard, &ignore)) {
+        if(GetLastWriteTime(DLL_NAME, &api->modificationTime)) {
+            size_t mark = nob_temp_save();
+            char *dllname = nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, version);
+            nob_temp_rewind(mark);
+            CopyFile(DLL_NAME, dllname, FALSE);
 
-            ok = api->initAll && api->initPartial && api->deInitAll && api->deInitPartial && api->memorySize && api->mainLoop;
+            api->library = LoadLibraryA(dllname);
+            if(api->library) {
+                api->initAll = (BoolVoidStarProc)GetProcAddress(api->library, "InitAll");
+                api->initPartial = (BoolVoidStarProc)GetProcAddress(api->library, "InitPartial");
+                api->deInitAll = (VoidStarProc)GetProcAddress(api->library, "DeInitAll");
+                api->deInitPartial = (VoidStarProc)GetProcAddress(api->library, "DeInitPartial");
+                
+                api->memorySize = (MemorySizeProc)GetProcAddress(api->library, "MemorySize");
+                api->mainLoop = (BoolVoidStarProc)GetProcAddress(api->library, "MainLoop");
 
-            if(ok) api->version = version;
+                ok = api->initAll && api->initPartial && api->deInitAll && api->deInitPartial && api->memorySize && api->mainLoop;
+
+                if(ok) api->version = version;
+            } else {
+                printf("%s\n", nob_win32_error_message(GetLastError()));
+            }
         }
     }
 
@@ -258,12 +259,16 @@ int main(int argc, char **argv)
 {
     (void) argc;
     if(ProgramAlreadyRunning(argv[0])) return 0;
-    nob_set_current_dir(nob_get_executable_dir_temp());
+    char *path = nob_get_executable_dir_temp();
+    nob_set_current_dir(path);
 
     int version = 0;
     ProgramApi api = {0};
     bool ok = LoadProgramApi(&api, version);
-    if(!ok) return 1;
+    if(!ok) {
+        fprintf(stderr, "Could not load program api\n");
+        return 1;
+    }
 
     version++;
     void *appMemory = malloc(api.memorySize());
