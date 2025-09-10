@@ -93,7 +93,8 @@ Template chosenTemplate = Template_None;
 
 int main(int argc, char **argv)
 {
-    if(!strcmp(GetSelfPath(), nob_get_current_dir_temp())) {
+    bool inExeDirectory = !strcmp(GetSelfPath(), nob_get_current_dir_temp());
+    if(inExeDirectory) {
         NOB_GO_REBUILD_URSELF(argc, argv);
     }
     nob_temp_reset();
@@ -106,6 +107,11 @@ int main(int argc, char **argv)
         } else if(!strcmp(arg, "SDL3")) {
             chosenTemplate = Template_SDL3;
         }
+    }
+
+    if(chosenTemplate != Template_None && inExeDirectory) {
+        fprintf(stderr, "This tool is not supposed to run in the same working directory as the executable.\n");
+        return 1;
     }
 
     switch(chosenTemplate) {

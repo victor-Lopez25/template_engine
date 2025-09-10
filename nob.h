@@ -563,6 +563,7 @@ NOBDEF bool nob_rename(const char *old_path, const char *new_path);
 NOBDEF int nob_needs_rebuild(const char *output_path, const char **input_paths, size_t input_paths_count);
 NOBDEF int nob_needs_rebuild1(const char *output_path, const char *input_path);
 NOBDEF int nob_file_exists(const char *file_path);
+NOBDEF const char *nob_get_executable_dir_temp(void);
 NOBDEF const char *nob_get_current_dir_temp(void);
 NOBDEF bool nob_set_current_dir(const char *path);
 
@@ -2066,6 +2067,37 @@ NOBDEF int nob_file_exists(const char *file_path)
     }
     return 1;
 #endif
+}
+
+NOBDEF const char *nob_get_executable_dir_temp(void)
+{
+#ifdef _WIN32
+    char temp;
+    DWORD len = GetModuleFileNameA(0, &temp, 1);
+    if(!len) {
+        return NULL;
+    }
+    char *buffer = nob_temp_alloc(len);
+    if(!GetModuleFileNameA(0, buffer, len)) {
+        return NULL;
+    }
+#elif defined(__APPLE__)
+    uint32_t bufsize = 0;
+    _NSGetExecutablePath(0, &bufsize);
+    char *buffer = nob_temp_alloc(bufsize);
+    if(_NSGetExecutablePath(buffer, &bufsize)) {
+        return NULL;
+    }
+#else
+    char *buffer = nob_temp_alloc(PATH_MAX);
+    ssize_t len = readlink("/proc/self/exe", buffer, PATH_MAX);
+    if(len == -1) return 0;
+    buffer[len] = 0;
+#endif
+    while(len > 0 && buffer[len] != '/' && buffer[len] != '\\') len--;
+    buffer[len] = 0;
+
+    return buffer;
 }
 
 NOBDEF const char *nob_get_current_dir_temp(void)
