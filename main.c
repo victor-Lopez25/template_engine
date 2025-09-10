@@ -21,17 +21,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #if defined(_WIN32)
 # if defined(__GNUC__)
-#  define COMMON_FLAGS "-Wall", "-Wextra"
+#  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
+#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
 #  define NOB_REBUILD_URSELF(binary_path, source_path) "gcc", "-o", binary_path, source_path, "-Wall", "-Wextra"
 # elif defined(__clang__)
-#  define COMMON_FLAGS "-Wall", "-Wextra"
+#  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
+#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
 #  define NOB_REBUILD_URSELF(binary_path, source_path) "clang", "-o", binary_path, source_path, "-Wall", "-Wextra"
 # elif defined(_MSC_VER)
-#  define COMMON_FLAGS "/nologo", "-Zi", "-FC", "-GR-", "-EHa", "-W4"
+#  define COMMON_FLAGS_NODEBUG "/nologo", "-FC", "-GR-", "-EHa", "-W4"
+#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-Zi"
 #  define NOB_REBUILD_URSELF(binary_path, source_path) "cl.exe", nob_temp_sprintf("/Fe:%s", (binary_path)), source_path, COMMON_FLAGS, "/link", "-incremental:no"
 # endif
 #else
-# define COMMON_FLAGS "-Wall", "-Wextra"
+# define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
+# define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
 # define NOB_REBUILD_URSELF(binary_path, source_path) "cc", "-o", binary_path, source_path, COMMON_FLAGS
 #endif
 
@@ -79,6 +83,7 @@ void Usage(char *program)
     printf("Usage: %s <template name>\n"
            "Possible templates are:\n"
            " - SDL3\n"
+           " - SDL3-hotreload (wip)\n"
            "\n"
            "This program will make a template program in the current directory\n",
            program);
@@ -87,9 +92,172 @@ void Usage(char *program)
 typedef enum {
     Template_None,
     Template_SDL3,
+    Template_SDL3_Hotreload,
+    Count_Templates,
 } Template;
 
+const char *TemplateToString(Template t)
+{
+    switch(t) {
+        case Template_SDL3: return "SDL3";
+        case Template_SDL3_Hotreload: return "SDL3 hotreload";
+        default: return "Unknown";
+    }
+}
+
 Template chosenTemplate = Template_None;
+
+void SetupGeneralSDL3Templates(void)
+{
+    nob_mkdir_if_not_exists("src");
+    nob_mkdir_if_not_exists("lib");
+    nob_mkdir_if_not_exists("include");
+    nob_mkdir_if_not_exists("dependencies");
+
+    size_t mark = nob_temp_save();
+
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3.dll", selfPath), "dependencies/SDL3.dll");
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_image.dll", selfPath), "dependencies/SDL3_image.dll");
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_ttf.dll", selfPath), "dependencies/SDL3_ttf.dll");
+    // SDL3_mixer also?
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3.lib", selfPath), "lib/SDL3.lib");
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_image.lib", selfPath), "lib/SDL3_image.lib");
+    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_ttf.lib", selfPath), "lib/SDL3_ttf.lib");
+
+    nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/include", selfPath), "include/SDL3");
+
+    nob_copy_file(nob_temp_sprintf("%s/template_files/spall.h", selfPath), "src/spall.h");
+    nob_copy_file(nob_temp_sprintf("%s/nob.h", selfPath), "nob.h");
+
+    nob_temp_rewind(mark);
+}
+
+void DoTemplate(Template chosen)
+{
+    switch(chosen) {
+        case Template_None: break;
+
+        case Template_SDL3: {
+            printf("Chosen template: SDL3\n");
+            SetupGeneralSDL3Templates();
+
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob.c", selfPath), "nob.c");
+        } break;
+
+        case Template_SDL3_Hotreload: {
+            printf("Chosen template: SDL3 + hotreload\n");
+            SetupGeneralSDL3Templates();
+
+            nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app.c", selfPath), "src/app.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_hotreload.c", selfPath), "nob.c");
+        } break;
+    }
+}
+
+bool TestTemplate(Nob_Cmd *cmd, Template chosen)
+{
+    switch(chosen) {
+        case Template_SDL3: {
+            nob_cc(cmd);
+            nob_cc_output(cmd, "nob");
+            nob_cmd_append(cmd, "nob.c", COMMON_FLAGS_NODEBUG);
+            if(!nob_cmd_run(cmd)) return false;
+            nob_cmd_append(cmd, "nob", "norun");
+            if(!nob_cmd_run(cmd)) return false;
+        } break;
+
+        case Template_SDL3_Hotreload: {
+            nob_cc(cmd);
+            nob_cc_output(cmd, "nob");
+            nob_cmd_append(cmd, "nob.c", COMMON_FLAGS_NODEBUG);
+            if(!nob_cmd_run(cmd)) return false;
+            nob_cmd_append(cmd, "nob", "norun", "hotreload");
+            if(!nob_cmd_run(cmd)) return false;
+
+            nob_cmd_append(cmd, "nob", "norun", "nohotreload");
+            if(!nob_cmd_run(cmd)) return false;
+        } break;
+    }
+
+    return true;
+}
+
+int IsDirectory(const char *file)
+{
+#if defined(_WIN32)
+    DWORD attr = GetFileAttributesA(file);
+    if(attr == INVALID_FILE_ATTRIBUTES || attr & FILE_ATTRIBUTE_SYSTEM) return 0;
+    if(attr & FILE_ATTRIBUTE_DIRECTORY) return 1;
+    return -1;
+#else
+    struct stat s;
+    if(!stat(path, &s)) {
+        if(s.st_mode & S_IFDIR) return 1;
+        if(s.st_mode & S_IFREG) return -1;
+        return 0;
+    }
+    return 0;
+#endif
+}
+
+// TODO: Do this iterative maybe?
+bool RemoveDirectoryRecursive(const char *dir)
+{
+    int attr = IsDirectory(dir);
+    if(attr == 1) { // directory
+        Nob_File_Paths paths = {0};
+        size_t mark = nob_temp_save();
+        nob_read_entire_dir(dir, &paths);
+        for(size_t pathIdx = 0; pathIdx < paths.count; pathIdx++)
+        {
+            if(strcmp(paths.items[pathIdx], ".") && strcmp(paths.items[pathIdx], "..")) {
+                if(!RemoveDirectoryRecursive(nob_temp_sprintf("%s/%s", dir, paths.items[pathIdx]))) {
+                    NOB_FREE(paths.items);
+                    nob_temp_rewind(mark);
+                    return false;
+                }
+            }
+        }
+        NOB_FREE(paths.items);
+        nob_temp_rewind(mark);
+#if defined(_WIN32)
+        return RemoveDirectoryA(dir);
+#else
+        return rmdir(dir) == 0;
+#endif
+    } else if(attr == -1) { // normal file
+        return nob_delete_file(dir);
+    }
+    return false;
+}
+
+void Test(void)
+{
+    Nob_Cmd cmd = {0};
+    bool returnOnFirstFail = true;
+    nob_minimal_log_level = NOB_ERROR;
+    RemoveDirectoryRecursive("temp");
+    for(int templateIdx = Template_None+1; templateIdx < Count_Templates; templateIdx++)
+    {
+        //nob_minimal_log_level = NOB_ERROR;
+        nob_mkdir_if_not_exists("temp");
+        nob_set_current_dir("temp");
+        
+        DoTemplate((Template)templateIdx);
+        nob_minimal_log_level = NOB_INFO;
+        
+        bool ok = TestTemplate(&cmd, (Template)templateIdx);
+        nob_minimal_log_level = NOB_ERROR;
+        
+        printf("Test: %s - %s\n", TemplateToString((Template)templateIdx), ok ? "success" : "fail");
+        nob_set_current_dir("..");
+        if(returnOnFirstFail && !ok) return;
+        if(!RemoveDirectoryRecursive("temp")) return;
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -106,46 +274,23 @@ int main(int argc, char **argv)
             return 0;
         } else if(!strcmp(arg, "SDL3")) {
             chosenTemplate = Template_SDL3;
+        } else if(!strcmp(arg, "SDL3-hotreload")) {
+            chosenTemplate = Template_SDL3_Hotreload;
+        } else if(!strcmp(arg, "test")) {
+            Test();
+            return 0;
         }
     }
 
-    if(chosenTemplate != Template_None && inExeDirectory) {
+    if(chosenTemplate == Template_None) {
+        printf("Please choose a template\n");
+        Usage(*argv);
+    } else if(inExeDirectory) {
         fprintf(stderr, "This tool is not supposed to run in the same working directory as the executable.\n");
         return 1;
     }
 
-    switch(chosenTemplate) {
-        case Template_None: {
-            printf("Please choose a template\n");
-            Usage(*argv);
-        } break;
-
-        case Template_SDL3: {
-            printf("Chosen template: SDL3\n");
-            
-            nob_mkdir_if_not_exists("src");
-            nob_mkdir_if_not_exists("lib");
-            nob_mkdir_if_not_exists("include");
-            nob_mkdir_if_not_exists("dependencies");
-
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3.dll", selfPath), "dependencies/SDL3.dll");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_image.dll", selfPath), "dependencies/SDL3_image.dll");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_ttf.dll", selfPath), "dependencies/SDL3_ttf.dll");
-            // SDL3_mixer also?
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3.lib", selfPath), "lib/SDL3.lib");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_image.lib", selfPath), "lib/SDL3_image.lib");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_ttf.lib", selfPath), "lib/SDL3_ttf.lib");
-
-            nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/include", selfPath), "include/SDL3");
-
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/spall.h", selfPath), "src/spall.h");
-
-            nob_copy_file(nob_temp_sprintf("%s/nob.h", selfPath), "nob.h");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob.c", selfPath), "nob.c");
-        } break;
-    }
+    DoTemplate(chosenTemplate);
 
     return 0;
-
 }

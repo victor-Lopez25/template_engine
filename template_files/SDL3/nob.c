@@ -50,6 +50,15 @@ int main(int argc, char **argv)
 {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
+    bool shouldrun = true;
+
+    while(argc > 1) {
+        char *arg = argv[--argc];
+        if(!strcmp(arg, "norun")) {
+            shouldrun = false;
+        }
+    }
+
     Nob_Cmd cmd = {0};
     nob_copy_directory_recursively("dependencies", "bin");
     nob_cc(&cmd);
@@ -65,8 +74,10 @@ int main(int argc, char **argv)
     nob_set_current_dir("bin");
     if(!nob_cmd_run(&cmd)) return 1;
 
-    nob_cmd_append(&cmd, "template");
-    if(!nob_cmd_run(&cmd)) return 1;
+    if(shouldrun) {
+        nob_cmd_append(&cmd, "template");
+        if(!nob_cmd_run(&cmd)) return 1;
+    }
     nob_set_current_dir("..");
 
     return 0;

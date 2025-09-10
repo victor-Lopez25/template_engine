@@ -98,7 +98,7 @@
 
 #ifndef NOB_H_
 #define NOB_H_
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
 #define _CRT_SECURE_NO_WARNINGS (1)
 #endif
 
