@@ -289,36 +289,37 @@ int main(int argc, char **argv)
     while(!quit) {
         uint64_t fileTime;
 
-        if(GetLastWriteTime(DLL_NAME, &fileTime) && api.modificationTime != fileTime &&
-           LoadProgramApi(&newApi, version)) {
-            if(api.memorySize() == newApi.memorySize()) {
-                // normal hot reload
-                nob_da_append(&oldApis, api);
-                api.deInitPartial(appMemory);
-                memcpy(&api, &newApi, sizeof(ProgramApi));
-                api.initPartial(appMemory);
-            } else {
-                // Full reset since we need a different amount of memory
-                api.deInitAll(appMemory);
+        if(GetLastWriteTime(DLL_NAME, &fileTime) && api.modificationTime != fileTime) {
+            if(LoadProgramApi(&newApi, version)) {
+                if(api.memorySize() == newApi.memorySize()) {
+                    // normal hot reload
+                    nob_da_append(&oldApis, api);
+                    api.deInitPartial(appMemory);
+                    memcpy(&api, &newApi, sizeof(ProgramApi));
+                    api.initPartial(appMemory);
+                } else {
+                    // Full reset since we need a different amount of memory
+                    api.deInitAll(appMemory);
 
-                for(size_t apiIdx = 0; apiIdx < oldApis.count; apiIdx++) {
-                    UnloadApi(&oldApis.items[apiIdx]);
-                }
-                oldApis.count = 0;
-                memcpy(&api, &newApi, sizeof(ProgramApi));
-                free(appMemory);
-                appMemory = malloc(api.memorySize());
-                if(!appMemory) {
-                    fprintf(stderr, "Could not alloc memory for program");
-                    return 1;
+                    for(size_t apiIdx = 0; apiIdx < oldApis.count; apiIdx++) {
+                        UnloadApi(&oldApis.items[apiIdx]);
+                    }
+                    oldApis.count = 0;
+                    memcpy(&api, &newApi, sizeof(ProgramApi));
+                    free(appMemory);
+                    appMemory = malloc(api.memorySize());
+                    if(!appMemory) {
+                        fprintf(stderr, "Could not alloc memory for program");
+                        return 1;
+                    }
+
+                    if(!api.initAll(appMemory)) {
+                        goto endProgram;
+                    }
                 }
 
-                if(!api.initAll(appMemory)) {
-                    goto endProgram;
-                }
+                version++;
             }
-
-            version++;
         }
 
         quit = api.mainLoop(appMemory);

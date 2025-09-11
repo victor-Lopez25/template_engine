@@ -93,6 +93,7 @@ typedef enum {
     Template_None,
     Template_SDL3,
     Template_SDL3_Hotreload,
+    Template_SDL3_GPU_Hotreload,
     Count_Templates,
 } Template;
 
@@ -101,13 +102,17 @@ const char *TemplateToString(Template t)
     switch(t) {
         case Template_SDL3: return "SDL3";
         case Template_SDL3_Hotreload: return "SDL3 hotreload";
+        case Template_SDL3_GPU_Hotreload: return "SDL3_GPU hotreload";
         default: return "Unknown";
     }
 }
 
 Template chosenTemplate = Template_None;
 
-void SetupGeneralSDL3Templates(void)
+#define SetupGeneralSDL3Templates(...) \
+    SetupGeneralSDL3Templates_(((const char*[]){"SDL3", __VA_ARGS__}), \
+                               (sizeof((const char*[]){"SDL3", __VA_ARGS__})/sizeof(const char*)))
+void SetupGeneralSDL3Templates_(char **libs, size_t libcount)
 {
     nob_mkdir_if_not_exists("src");
     nob_mkdir_if_not_exists("lib");
@@ -116,13 +121,10 @@ void SetupGeneralSDL3Templates(void)
 
     size_t mark = nob_temp_save();
 
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3.dll", selfPath), "dependencies/SDL3.dll");
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_image.dll", selfPath), "dependencies/SDL3_image.dll");
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/SDL3_ttf.dll", selfPath), "dependencies/SDL3_ttf.dll");
-    // SDL3_mixer also?
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3.lib", selfPath), "lib/SDL3.lib");
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_image.lib", selfPath), "lib/SDL3_image.lib");
-    nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/SDL3_ttf.lib", selfPath), "lib/SDL3_ttf.lib");
+    for(size_t i = 0; i < libcount; i++) {
+        nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/%s.dll", selfPath, libs[i]), nob_temp_sprintf("dependencies/%s.dll", libs[i]));
+        nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/%s.lib", selfPath, libs[i]), nob_temp_sprintf("lib/%s.lib", libs[i]));
+    }
 
     nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/include", selfPath), "include/SDL3");
 
@@ -134,26 +136,38 @@ void SetupGeneralSDL3Templates(void)
 
 void DoTemplate(Template chosen)
 {
-    switch(chosen) {
-        case Template_None: break;
+    if(chosen <= Template_None || chosen >= Count_Templates) {
+        return;
+    }
 
+    printf("Chosen template: %s\n", TemplateToString(chosen));
+    switch(chosen) {
         case Template_SDL3: {
-            printf("Chosen template: SDL3\n");
-            SetupGeneralSDL3Templates();
+            // SDL3_mixer also?
+            SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf");
 
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob.c", selfPath), "nob.c");
         } break;
 
         case Template_SDL3_Hotreload: {
-            printf("Chosen template: SDL3 + hotreload\n");
-            SetupGeneralSDL3Templates();
+            // SDL3_mixer also?
+            SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf");
 
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app.c", selfPath), "src/app.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_hotreload.c", selfPath), "nob.c");
         } break;
+
+        case Template_SDL3_GPU_Hotreload: {
+            SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf", "SDL3_shadercross");
+
+            nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_gpu.c", selfPath), "nob.c");
+        }
     }
 }
 
@@ -169,7 +183,8 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
             if(!nob_cmd_run(cmd)) return false;
         } break;
 
-        case Template_SDL3_Hotreload: {
+        case Template_SDL3_Hotreload:
+        case Template_SDL3_GPU_Hotreload: {
             nob_cc(cmd);
             nob_cc_output(cmd, "nob");
             nob_cmd_append(cmd, "nob.c", COMMON_FLAGS_NODEBUG);

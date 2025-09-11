@@ -282,14 +282,14 @@ DLL_EXPORT bool InitAll(void *rawdata)
     SDL_GetWindowSize(ctx->window, &ctx->windowWidth, &ctx->windowHeight);
     SDL_SetEventFilter(FilterSDL3Events, ctx);
 
-    bool ok = InitWorkQueue(&ctx->spall_ctx, &ctx->workQueue, 2);
-
     SDL_memset4(ctx->input.regularKeysUp, 0x01010101, sizeof(ctx->input.regularKeysUp)/4);
     ctx->input.mouseLeft.up = true; ctx->input.mouseMiddle.up = true; ctx->input.mouseRight.up = true;
     ctx->input.mouseX1.up = true; ctx->input.mouseX2.up = true;
 
     ctx->deltaTime = 0.0f;
     ctx->targetFPS = 60.0f;
+
+    bool ok = InitWorkQueue(&ctx->spall_ctx, &ctx->workQueue, 2);
 
     Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
 
@@ -335,6 +335,8 @@ void RenderAll(ProgramContext *ctx)
     SDL_RenderClear(ctx->renderer);
 
     // Send render commands here.
+    SDL_SetRenderDrawColor(ctx->renderer, 200, 200, 200, 255);
+    SDL_RenderDebugText(ctx->renderer, 100, 60, "debug text");
 
     SDL_RenderPresent(ctx->renderer);
 
@@ -400,6 +402,7 @@ DLL_EXPORT bool MainLoop(void *rawdata)
                     ctx->input.regularKeysDown[event.key.key] = true;
                     ctx->input.regularKeysUp[event.key.key] = false;
                 }
+                //SDL_Log("key down: %u", event.key.key);
             } break;
 
             case SDL_EVENT_KEY_UP: {
