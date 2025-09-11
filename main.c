@@ -148,6 +148,7 @@ void DoTemplate(Template chosen)
 
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob.c", selfPath), "nob.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README.md", selfPath), "README.md");
         } break;
 
         case Template_SDL3_Hotreload: {
@@ -158,6 +159,7 @@ void DoTemplate(Template chosen)
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app.c", selfPath), "src/app.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_hotreload.c", selfPath), "nob.c");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README_hotreload.md", selfPath), "README.md");
         } break;
 
         case Template_SDL3_GPU_Hotreload: {
