@@ -112,7 +112,7 @@ Template chosenTemplate = Template_None;
 #define SetupGeneralSDL3Templates(...) \
     SetupGeneralSDL3Templates_(((const char*[]){"SDL3", __VA_ARGS__}), \
                                (sizeof((const char*[]){"SDL3", __VA_ARGS__})/sizeof(const char*)))
-void SetupGeneralSDL3Templates_(char **libs, size_t libcount)
+void SetupGeneralSDL3Templates_(const char **libs, size_t libcount)
 {
     nob_mkdir_if_not_exists("src");
     nob_mkdir_if_not_exists("lib");
@@ -136,9 +136,7 @@ void SetupGeneralSDL3Templates_(char **libs, size_t libcount)
 
 void DoTemplate(Template chosen)
 {
-    if(chosen <= Template_None || chosen >= Count_Templates) {
-        return;
-    }
+    NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
 
     printf("Chosen template: %s\n", TemplateToString(chosen));
     switch(chosen) {
@@ -169,12 +167,16 @@ void DoTemplate(Template chosen)
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_gpu.c", selfPath), "nob.c");
-        }
+        } break;
+
+        case Template_None: case Count_Templates: break;
     }
 }
 
 bool TestTemplate(Nob_Cmd *cmd, Template chosen)
 {
+    NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
+
     switch(chosen) {
         case Template_SDL3: {
             nob_cc(cmd);
@@ -197,6 +199,8 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
             nob_cmd_append(cmd, "nob", "norun", "nohotreload");
             if(!nob_cmd_run(cmd)) return false;
         } break;
+
+        case Template_None: case Count_Templates: return false;
     }
 
     return true;
@@ -211,7 +215,7 @@ int IsDirectory(const char *file)
     return -1;
 #else
     struct stat s;
-    if(!stat(path, &s)) {
+    if(!stat(file, &s)) {
         if(s.st_mode & S_IFDIR) return 1;
         if(s.st_mode & S_IFREG) return -1;
         return 0;
@@ -262,13 +266,13 @@ void Test(void)
         //nob_minimal_log_level = NOB_ERROR;
         nob_mkdir_if_not_exists("temp");
         nob_set_current_dir("temp");
-        
+
         DoTemplate((Template)templateIdx);
         nob_minimal_log_level = NOB_INFO;
-        
+
         bool ok = TestTemplate(&cmd, (Template)templateIdx);
         nob_minimal_log_level = NOB_ERROR;
-        
+
         printf("Test: %s - %s\n", TemplateToString((Template)templateIdx), ok ? "success" : "fail");
         nob_set_current_dir("..");
         if(returnOnFirstFail && !ok) return;
@@ -302,6 +306,7 @@ int main(int argc, char **argv)
     if(chosenTemplate == Template_None) {
         printf("Please choose a template\n");
         Usage(*argv);
+        return 0;
     } else if(inExeDirectory) {
         fprintf(stderr, "This tool is not supposed to run in the same working directory as the executable.\n");
         return 1;

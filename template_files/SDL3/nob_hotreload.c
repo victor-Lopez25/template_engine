@@ -39,7 +39,7 @@ void cmd_cc_libs_(Nob_Cmd *cmd, const char **items, size_t itemCount)
 {
     for(size_t i = 0; i < itemCount; i++) {
 #if defined(_MSC_VER)
-        nob_cmd_append(cmd, items[i]);
+        nob_cmd_append(cmd, nob_temp_sprintf("%s.lib", items[i]));
 #else
         nob_cmd_append(cmd, "-l", items[i]);
 #endif
@@ -124,7 +124,7 @@ bool CompileApp(Nob_Cmd *cmd)
     nob_cmd_append(cmd, "-o", "app" DLL_EXT, "-shared");
 #endif
     cmd_cc_libpath(cmd, "../lib");
-    cmd_cc_libs(cmd, "SDL3.lib", "SDL3_ttf.lib", "SDL3_image.lib");
+    cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
 #if defined(_MSC_VER)
     char pdb_lock_str[] = "PDBSHIT";
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
     }
 
     nob_copy_directory_recursively("dependencies", "bin");
-    nob_set_current_dir("bin");    
+    nob_set_current_dir("bin");
     Nob_Cmd cmd = {0};
 
     if(!CompileApp(&cmd)) return 1;
@@ -184,9 +184,9 @@ int main(int argc, char **argv)
         nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
 #endif
         cmd_cc_libpath(&cmd, "../lib");
-        cmd_cc_libs(&cmd, "SDL3.lib", "SDL3_ttf.lib", "SDL3_image.lib");
+        cmd_cc_libs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
-        if(!nob_cmd_run(&cmd)) return 1;        
+        if(!nob_cmd_run(&cmd)) return 1;
     }
 
     if(shouldrun) {
