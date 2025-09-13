@@ -81,9 +81,11 @@ char *GetSelfPath() {
 void Usage(char *program)
 {
     printf("Usage: %s <template name>\n"
+           "Not currently working for linux, will fix soon\n"
            "Possible templates are:\n"
            " - SDL3\n"
-           " - SDL3-hotreload (wip)\n"
+           " - SDL3-hotreload\n"
+           " - SDL3-gpu (wip)\n"
            "\n"
            "This program will make a template program in the current directory\n",
            program);
@@ -138,7 +140,7 @@ void DoTemplate(Template chosen)
 {
     NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
 
-    printf("Chosen template: %s\n", TemplateToString(chosen));
+    nob_log(NOB_INFO, "Chosen template: %s\n", TemplateToString(chosen));
     switch(chosen) {
         case Template_SDL3: {
             // SDL3_mixer also?
@@ -297,6 +299,8 @@ int main(int argc, char **argv)
             chosenTemplate = Template_SDL3;
         } else if(!strcmp(arg, "SDL3-hotreload")) {
             chosenTemplate = Template_SDL3_Hotreload;
+        } else if(!strcmp(arg, "SDL3-gpu")) {
+            chosenTemplate = Template_SDL3_GPU_Hotreload;
         } else if(!strcmp(arg, "test")) {
             Test();
             return 0;
