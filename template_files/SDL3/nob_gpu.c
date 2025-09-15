@@ -117,13 +117,13 @@ bool ProgramAlreadyRunning(const char *program)
 bool CompileApp(Nob_Cmd *cmd)
 {
     nob_cc(cmd);
-    nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include");
+    nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
 #if defined(_MSC_VER)
     nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s", "app" DLL_EXT), "-D_CRT_SECURE_NO_WARNINGS", "/link", "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
+    cmd_cc_libpath(cmd, "../lib");
 #else
     nob_cmd_append(cmd, "-o", "app" DLL_EXT, "-shared");
 #endif
-    cmd_cc_libpath(cmd, "../lib");
     cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 
 #if defined(_MSC_VER)
@@ -177,9 +177,11 @@ int main(int argc, char **argv)
             if(!nob_cmd_run(&cmd)) return 1;
         }
     } else {
+        nob_copy_directory_recursively("../shaders", "shaders");
+
         nob_cc(&cmd);
         nob_cc_output(&cmd, app_name);
-        nob_cmd_append(&cmd, "../src/main_no_hot_reload.c", COMMON_FLAGS, "-I", "../include");
+        nob_cmd_append(&cmd, "../src/main_no_hot_reload.c", COMMON_FLAGS, "-I", "../include", "-DSHADER_DIRECTORY=\"shaders/\"");
 #if defined(_MSC_VER)
         nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
 #endif

@@ -165,6 +165,8 @@ void DoTemplate(Template chosen)
         case Template_SDL3_GPU_Hotreload: {
             SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf", "SDL3_shadercross");
 
+            nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/shaders", selfPath), "shaders");
+
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");

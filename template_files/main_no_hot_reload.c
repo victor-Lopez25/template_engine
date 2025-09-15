@@ -80,6 +80,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    SDL_memset4(appMemory, 0, MemorySize()/4);
     if(!InitAll(appMemory)) {
         free(appMemory);
         return 1;

@@ -277,6 +277,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    memset(appMemory, 0, api.memorySize());
     if(!api.initAll(appMemory)) {
         free(appMemory);
         UnloadApi(&api);
@@ -313,6 +314,7 @@ int main(int argc, char **argv)
                         return 1;
                     }
 
+                    memset(appMemory, 0, api.memorySize());
                     if(!api.initAll(appMemory)) {
                         goto endProgram;
                     }
