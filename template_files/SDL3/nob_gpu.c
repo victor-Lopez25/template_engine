@@ -55,6 +55,27 @@ void cmd_cc_libpath(Nob_Cmd *cmd, const char *path)
 #endif
 }
 
+/* 1 - directory
+   0 - other
+  -1 - file      */
+int IsDirectory(const char *file)
+{
+#if defined(_WIN32)
+    DWORD attr = GetFileAttributesA(file);
+    if(attr == INVALID_FILE_ATTRIBUTES || attr & FILE_ATTRIBUTE_SYSTEM) return 0;
+    if(attr & FILE_ATTRIBUTE_DIRECTORY) return 1;
+    return -1;
+#else
+    struct stat s;
+    if(!stat(file, &s)) {
+        if(s.st_mode & S_IFDIR) return 1;
+        if(s.st_mode & S_IFREG) return -1;
+        return 0;
+    }
+    return 0;
+#endif
+}
+
 #if defined(_WIN32)
 bool ProgramAlreadyRunning(const char *program)
 {
@@ -137,6 +158,25 @@ bool CompileApp(Nob_Cmd *cmd)
 #endif
 
     return true;
+}
+
+void CompileGlslShader(const char *shaderfile)
+{
+    nob_log(NOB_ERROR, "TODO");
+}
+
+void CompileGlslShadersInDirectory(const char *directory)
+{
+    Nob_File_Paths files = {0};
+    if(nob_read_entire_dir(directory, &files)) {
+        for(size_t fileIdx = 0; fileIdx < files.count; fileIdx++) {
+            const char *file = files.items[fileIdx];
+            if(IsDirectory(file) == -1 && strstr(file, "glsl")) {
+                CompileGlslShader(file);
+            }
+        }
+    }
+    NOB_FREE(files.items);
 }
 
 int main(int argc, char **argv)

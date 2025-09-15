@@ -116,6 +116,7 @@ typedef struct {
 typedef struct {
     SDL_GPUShader *shader;
     SDL_ShaderCross_GraphicsShaderMetadata *meta;
+    const char *filename;
     Uint64 fileTime;
 } ShaderInfo;
 
@@ -323,21 +324,38 @@ bool GetShaderStageFormatFromName(const char *shaderFile, SDL_GPUShaderStage *st
     return true;
 }
 
-#define CompileShader(gpu, shaderFile, info) \
-    CompileShader_(gpu, SHADER_DIRECTORY shaderFile, info) 
-bool CompileShader_(SDL_GPUDevice *gpu, const char *shaderFile, ShaderInfo *info)
+void FreeShader(SDL_GPUDevice *gpu, ShaderInfo *shader)
 {
+    if(shader->meta) SDL_free(shader->meta);
+    shader->meta = 0;
+    if(shader->shader) SDL_ReleaseGPUShader(gpu, shader->shader);
+    shader->shader = 0;
+}
+
+bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDevice *gpu, ShaderInfo *info)
+{
+    Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
+
     Uint64 currentFileTime;
-    if(!GetLastWriteTime(shaderFile, &currentFileTime) || currentFileTime == info->fileTime) return true;
+    if(!GetLastWriteTime(info->filename, &currentFileTime) || currentFileTime == info->fileTime) {
+        Spall_BufferEnd(spall_ctx, spall_buffer);
+        return false;
+    }
     info->fileTime = currentFileTime;
 
     SDL_GPUShaderStage stage;
     Uint32 format;
-    if(!GetShaderStageFormatFromName(shaderFile, &stage, &format)) return false;
+    if(!GetShaderStageFormatFromName(info->filename, &stage, &format)) {
+        Spall_BufferEnd(spall_ctx, spall_buffer);
+        return false;
+    }
 
     size_t shaderFileSize;
-    const char *shaderFileData = (const char*)SDL_LoadFile(shaderFile, &shaderFileSize);
-    if(!shaderFileData) return false;
+    const char *shaderFileData = (const char*)SDL_LoadFile(info->filename, &shaderFileSize);
+    if(!shaderFileData) {
+        Spall_BufferEnd(spall_ctx, spall_buffer);
+        return false;
+    }
 
     size_t bytecodeSize;
     void *bytecode;
@@ -354,8 +372,11 @@ bool CompileShader_(SDL_GPUDevice *gpu, const char *shaderFile, ShaderInfo *info
                 .props = 0,
             };
             bytecode = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &bytecodeSize);
-            if(!bytecode) return false;
             SDL_free((void*)shaderFileData);
+            if(!bytecode) {
+                Spall_BufferEnd(spall_ctx, spall_buffer);
+                return false;
+            }
         } break;
 
         case SHADER_FORMAT_SPIRV: {
@@ -366,9 +387,12 @@ bool CompileShader_(SDL_GPUDevice *gpu, const char *shaderFile, ShaderInfo *info
         default: return false;
     }
 
+    SDL_ShaderCross_GraphicsShaderMetadata *meta;
+    SDL_GPUShader *shader;
     if(stage == SDL_SHADERCROSS_SHADERSTAGE_COMPUTE) {
         // TODO
         SDL_free(bytecode);
+        Spall_BufferEnd(spall_ctx, spall_buffer);
         return false;
     } else {
         SDL_ShaderCross_SPIRV_Info spvInfo = {
@@ -377,34 +401,51 @@ bool CompileShader_(SDL_GPUDevice *gpu, const char *shaderFile, ShaderInfo *info
             .entrypoint = "main",
             .shader_stage = stage,
             .enable_debug = true,
-            .name = shaderFile,
+            .name = info->filename,
             .props = 0,
         };
 
-        info->meta = SDL_ShaderCross_ReflectGraphicsSPIRV(bytecode, bytecodeSize, 0);
-        if(!info->meta) {
+        meta = SDL_ShaderCross_ReflectGraphicsSPIRV(bytecode, bytecodeSize, 0);
+        if(!meta) {
             SDL_free(bytecode);
-            SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not get shader '%s' metadata", shaderFile);
+            SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not get shader '%s' metadata", info->filename);
+            Spall_BufferEnd(spall_ctx, spall_buffer);
             return false;
         }
 
-        info->shader = SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(gpu, &spvInfo, info->meta, 0);
-        if(!info->shader) {
+        shader = SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(gpu, &spvInfo, meta, 0);
+        if(!shader) {
             SDL_free(bytecode);
-            SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not compile shader '%s'", shaderFile);
+            SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not compile shader '%s'", info->filename);
+            SDL_free(meta);
+            Spall_BufferEnd(spall_ctx, spall_buffer);
             return false;
         }
     }
 
+    FreeShader(gpu, info);
+    info->shader = shader;
+    info->meta = meta;
+    
+    Spall_BufferEnd(spall_ctx, spall_buffer);
+
     return true;
 }
 
-void FreeShader(SDL_GPUDevice *gpu, ShaderInfo *shader)
+SDL_GPUGraphicsPipeline *PipelineFromShaders(ProgramContext *ctx, ShaderInfo *vert, ShaderInfo *frag, SDL_GPUGraphicsPipelineCreateInfo *info, bool createAlways)
 {
-    if(shader->meta) SDL_free(shader->meta);
-    if(shader->shader) SDL_ReleaseGPUShader(gpu, shader->shader);
-    shader->shader = 0;
-    shader->meta = 0;
+    bool recompiledVert = CompileShader(ctx->gpu, vert);
+    bool recompiledFrag = CompileShader(ctx->gpu, frag);
+    if(!createAlways && !recompiledVert && !recompiledFrag) return NULL;
+
+    SDL_GPUColorTargetDescription colorTargetDesc = {.format = ctx->swapchainTextureFormat};
+    info->target_info.num_color_targets = 1;
+    info->target_info.color_target_descriptions = &colorTargetDesc;
+    info->primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    info->vertex_shader = vert->shader;
+    info->fragment_shader = frag->shader;
+
+    return SDL_CreateGPUGraphicsPipeline(ctx->gpu, info);
 }
 
 DLL_EXPORT bool InitAll(void *rawdata)
@@ -470,36 +511,23 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     ctx->swapchainTextureFormat = SDL_GetGPUSwapchainTextureFormat(ctx->gpu, ctx->window);
 
-    if(!CompileShader(ctx->gpu, "shader.vert.hlsl", &ctx->vertexShader)) return false;
-    if(!CompileShader(ctx->gpu, "shader.frag.hlsl", &ctx->fragmentShader)) return false;
+    ctx->vertexShader.filename = SHADER_DIRECTORY "shader.vert.hlsl";
+    ctx->fragmentShader.filename = SHADER_DIRECTORY "shader.frag.hlsl";
 
     SDL_GPUGraphicsPipelineCreateInfo pipelineCreateInfo = {
-        .target_info = {
-            .num_color_targets = 1,
-            .color_target_descriptions = &(SDL_GPUColorTargetDescription){
-                .format = ctx->swapchainTextureFormat,
-            },
-        },
-        .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-        .vertex_shader = ctx->vertexShader.shader,
-        .fragment_shader = ctx->fragmentShader.shader,
+        .rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL,
     };
-    
-    pipelineCreateInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    ctx->fillPipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, &pipelineCreateInfo);
+    ctx->fillPipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineCreateInfo, true);
     if(!ctx->fillPipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create fill pipeline");
         return false;
     }
     pipelineCreateInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
-    ctx->linePipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, &pipelineCreateInfo);
+    ctx->linePipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineCreateInfo, true);
     if(!ctx->linePipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create line pipeline");
         return false;
     }
-
-    FreeShader(ctx->gpu, &ctx->vertexShader);
-    FreeShader(ctx->gpu, &ctx->fragmentShader);
 
     const char *driver = SDL_GetGPUDeviceDriver(ctx->gpu);
     if(driver) {
@@ -565,6 +593,9 @@ DLL_EXPORT void DeInitAll(void *rawdata)
     SDL_free(ctx->workQueue.spall_buffers);
 
     SDL_ShaderCross_Quit();
+
+    FreeShader(ctx->gpu, &ctx->vertexShader);
+    FreeShader(ctx->gpu, &ctx->fragmentShader);
 
     SDL_ReleaseGPUGraphicsPipeline(ctx->gpu, ctx->fillPipeline);
     SDL_ReleaseGPUGraphicsPipeline(ctx->gpu, ctx->linePipeline);
@@ -704,6 +735,18 @@ DLL_EXPORT bool MainLoop(void *rawdata)
 
     if(ctx->input.regularKeysPressed[SDLK_W]) {
         ctx->wireframeMode = !ctx->wireframeMode;
+    }
+
+    SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {0};
+    pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    SDL_GPUGraphicsPipeline *fillPipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineInfo, false);
+    if(fillPipeline) {
+        ctx->fillPipeline = fillPipeline;
+        pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+        SDL_GPUGraphicsPipeline *linePipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineInfo, true);
+        if(linePipeline) {
+            ctx->linePipeline = linePipeline;
+        }
     }
 
     RenderAll(ctx);
