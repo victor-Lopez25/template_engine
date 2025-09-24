@@ -434,9 +434,13 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
 
 SDL_GPUGraphicsPipeline *PipelineFromShaders(ProgramContext *ctx, ShaderInfo *vert, ShaderInfo *frag, SDL_GPUGraphicsPipelineCreateInfo *info, bool createAlways)
 {
-    bool recompiledVert = CompileShader(ctx->gpu, vert);
-    bool recompiledFrag = CompileShader(ctx->gpu, frag);
-    if(!createAlways && !recompiledVert && !recompiledFrag) return NULL;
+    Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
+    bool recompiledVert = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, vert);
+    bool recompiledFrag = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, frag);
+    if(!createAlways && !recompiledVert && !recompiledFrag) {
+        Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
+        return NULL;
+    }
 
     SDL_GPUColorTargetDescription colorTargetDesc = {.format = ctx->swapchainTextureFormat};
     info->target_info.num_color_targets = 1;
@@ -445,7 +449,11 @@ SDL_GPUGraphicsPipeline *PipelineFromShaders(ProgramContext *ctx, ShaderInfo *ve
     info->vertex_shader = vert->shader;
     info->fragment_shader = frag->shader;
 
-    return SDL_CreateGPUGraphicsPipeline(ctx->gpu, info);
+    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, info);
+
+    Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
+
+    return pipeline;
 }
 
 DLL_EXPORT bool InitAll(void *rawdata)
