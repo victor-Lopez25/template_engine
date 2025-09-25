@@ -20,18 +20,24 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #if defined(_WIN32)
+# if defined(SHORTCUT_PATH)
+#  define SHORTCUT_PATH_ARG , "-DSHORTCUT_PATH=\"" SHORTCUT_PATH "\""
+# else
+#  define SHORTCUT_PATH_ARG
+# endif
+
 # if defined(__GNUC__)
 #  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
 #  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "gcc", "-o", binary_path, source_path, "-Wall", "-Wextra"
+#  define NOB_REBUILD_URSELF(binary_path, source_path) "gcc", "-o", binary_path, source_path, "-Wall", "-Wextra" SHORTCUT_PATH_ARG
 # elif defined(__clang__)
 #  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
 #  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "clang", "-o", binary_path, source_path, "-Wall", "-Wextra"
+#  define NOB_REBUILD_URSELF(binary_path, source_path) "clang", "-o", binary_path, source_path, "-Wall", "-Wextra" SHORTCUT_PATH_ARG
 # elif defined(_MSC_VER)
 #  define COMMON_FLAGS_NODEBUG "/nologo", "-FC", "-GR-", "-EHa", "-W4"
 #  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-Zi"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "cl.exe", nob_temp_sprintf("/Fe:%s", (binary_path)), source_path, COMMON_FLAGS, "/link", "-incremental:no"
+#  define NOB_REBUILD_URSELF(binary_path, source_path) "cl.exe", nob_temp_sprintf("/Fe:%s", (binary_path)), source_path, COMMON_FLAGS SHORTCUT_PATH_ARG, "/link", "-incremental:no"
 # endif
 #else
 # define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
@@ -287,9 +293,6 @@ void Test(void)
 int main(int argc, char **argv)
 {
     bool inExeDirectory = !strcmp(GetSelfPath(), nob_get_current_dir_temp());
-    if(inExeDirectory) {
-        NOB_GO_REBUILD_URSELF(argc, argv);
-    }
     nob_temp_reset();
 
     for(int argIdx = 1; argIdx < argc; argIdx++) {
@@ -307,6 +310,14 @@ int main(int argc, char **argv)
             Test();
             return 0;
         }
+    }
+
+    if(inExeDirectory) {
+        NOB_GO_REBUILD_URSELF(argc, argv);
+#if defined(_WIN32) && defined(SHORTCUT_PATH)
+        system("make_shortcut.bat "SHORTCUT_PATH);
+        nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
+#endif
     }
 
     if(chosenTemplate == Template_None) {
