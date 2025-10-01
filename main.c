@@ -87,7 +87,6 @@ char *GetSelfPath() {
 void Usage(char *program)
 {
     printf("Usage: %s <template name>\n"
-           "Not currently working for linux, will fix soon\n"
            "Possible templates are:\n"
            " - SDL3\n"
            " - SDL3-hotreload\n"
