@@ -334,13 +334,13 @@ void FreeShader(SDL_GPUDevice *gpu, ShaderInfo *shader)
 
 bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDevice *gpu, ShaderInfo *info)
 {
-    Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
-
     Uint64 currentFileTime;
     if(!GetLastWriteTime(info->filename, &currentFileTime) || currentFileTime == info->fileTime) {
         Spall_BufferEnd(spall_ctx, spall_buffer);
         return false;
     }
+    
+    Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
     info->fileTime = currentFileTime;
 
     SDL_GPUShaderStage stage;
@@ -434,13 +434,12 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
 
 SDL_GPUGraphicsPipeline *PipelineFromShaders(ProgramContext *ctx, ShaderInfo *vert, ShaderInfo *frag, SDL_GPUGraphicsPipelineCreateInfo *info, bool createAlways)
 {
-    Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
     bool recompiledVert = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, vert);
     bool recompiledFrag = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, frag);
     if(!createAlways && !recompiledVert && !recompiledFrag) {
-        Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
         return NULL;
     }
+    Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
 
     SDL_GPUColorTargetDescription colorTargetDesc = {.format = ctx->swapchainTextureFormat};
     info->target_info.num_color_targets = 1;
