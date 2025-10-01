@@ -25,4 +25,4 @@ If for any reason you want to not hot reload, you can run `nob(.exe) nohotreload
 
 On windows, vendored.
 
-On linux/mac, try to find packages 'sdl3', 'sdl3-image', 'sdl3-ttf' or similar (need the 3 unless the template is changed)
+On linux/mac, compile from source or try to find packages 'sdl3', 'sdl3-image', 'sdl3-ttf' or similar (need the 3 unless the template is changed)
