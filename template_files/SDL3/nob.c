@@ -75,7 +75,7 @@ int main(int argc, char **argv)
     if(!nob_cmd_run(&cmd)) return 1;
 
     if(shouldrun) {
-        nob_cmd_append(&cmd, "template");
+        nob_cmd_append(&cmd, "./template");
         if(!nob_cmd_run(&cmd)) return 1;
     }
     nob_set_current_dir("..");

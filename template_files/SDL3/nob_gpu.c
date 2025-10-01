@@ -235,7 +235,7 @@ int main(int argc, char **argv)
 #if defined(_WIN32)
         nob_cmd_append(&cmd, nob_temp_sprintf("%s.exe", app_name));
 #else
-        nob_cmd_append(&cmd, app_name);
+        nob_cmd_append(&cmd, nob_temp_sprintf("./%s", app_name));
 #endif
         if(!nob_cmd_run(&cmd)) return 1;
     }
