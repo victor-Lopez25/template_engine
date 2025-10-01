@@ -188,7 +188,7 @@ void AddWorkEntry(WorkQueue *queue, ThreadWorkCallback callback, void *data)
 {
     Uint32 nextEntryToWrite = (queue->nextEntryToWrite + 1) % SDL_arraysize(queue->entries);
     // TODO: If this is the case, the work queue should be larger/resizable
-    SDL_assert(nextEntryToWrite != SDL_GetAtomicInt(&queue->nextEntryToRead));
+    SDL_assert((int)nextEntryToWrite != SDL_GetAtomicInt(&queue->nextEntryToRead));
     WorkQueueEntry *entry = &queue->entries[queue->nextEntryToWrite];
     entry->callback = callback;
     entry->data = data;
@@ -205,7 +205,7 @@ bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQue
     Uint32 originalNextEntryToRead = SDL_GetAtomicInt(&queue->nextEntryToRead);
     Uint32 nextEntryToRead = (originalNextEntryToRead + 1) % SDL_arraysize(queue->entries);
     if(originalNextEntryToRead != queue->nextEntryToWrite) {
-        if(SDL_CompareAndSwapAtomicU32(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
+        if(SDL_CompareAndSwapAtomicInt(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
             WorkQueueEntry *entry = &queue->entries[originalNextEntryToRead];
             entry->callback(spall_ctx, spall_buffer, entry->data);
             SDL_AddAtomicU32(&queue->completionCount, 1);
