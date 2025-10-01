@@ -41,10 +41,10 @@ typedef struct {
 } WorkQueueEntry;
 
 typedef struct {
-    SDL_AtomicU32 completionGoal;
-    SDL_AtomicU32 completionCount;
+    SDL_AtomicInt completionGoal;
+    SDL_AtomicInt completionCount;
     volatile Uint32 nextEntryToWrite;
-    SDL_AtomicU32 nextEntryToRead;
+    SDL_AtomicInt nextEntryToRead;
     SDL_Semaphore *semaphore;
 
     WorkQueueEntry entries[256];
@@ -136,7 +136,7 @@ void AddWorkEntry(WorkQueue *queue, ThreadWorkCallback callback, void *data)
 {
     Uint32 nextEntryToWrite = (queue->nextEntryToWrite + 1) % SDL_arraysize(queue->entries);
     // TODO: If this is the case, the work queue should be larger/resizable
-    SDL_assert(nextEntryToWrite != SDL_GetAtomicU32(&queue->nextEntryToRead));
+    SDL_assert(nextEntryToWrite != SDL_GetAtomicInt(&queue->nextEntryToRead));
     WorkQueueEntry *entry = &queue->entries[queue->nextEntryToWrite];
     entry->callback = callback;
     entry->data = data;
@@ -150,7 +150,7 @@ bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQue
 {
     bool shouldSleep = false;
 
-    Uint32 originalNextEntryToRead = SDL_GetAtomicU32(&queue->nextEntryToRead);
+    Uint32 originalNextEntryToRead = SDL_GetAtomicInt(&queue->nextEntryToRead);
     Uint32 nextEntryToRead = (originalNextEntryToRead + 1) % SDL_arraysize(queue->entries);
     if(originalNextEntryToRead != queue->nextEntryToWrite) {
         if(SDL_CompareAndSwapAtomicU32(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
@@ -167,12 +167,12 @@ bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQue
 
 void CompleteAllWorkerEntries(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQueue *queue)
 {
-    while(SDL_GetAtomicU32(&queue->completionGoal) != SDL_GetAtomicU32(&queue->completionCount)) {
+    while(SDL_GetAtomicInt(&queue->completionGoal) != SDL_GetAtomicInt(&queue->completionCount)) {
         DoNextWorkEntry(spall_ctx, spall_buffer, queue);
     }
 
-    SDL_SetAtomicU32(&queue->completionGoal, 0);
-    SDL_SetAtomicU32(&queue->completionCount, 0);
+    SDL_SetAtomicInt(&queue->completionGoal, 0);
+    SDL_SetAtomicInt(&queue->completionCount, 0);
 }
 
 typedef struct {
@@ -199,11 +199,11 @@ int SDLCALL ThreadProc(void *data)
 
 bool InitWorkQueue(SpallProfile *spall_ctx, WorkQueue *queue, Uint32 threadCount)
 {
-    SDL_SetAtomicU32(&queue->completionGoal, 0);
-    SDL_SetAtomicU32(&queue->completionCount, 0);
+    SDL_SetAtomicInt(&queue->completionGoal, 0);
+    SDL_SetAtomicInt(&queue->completionCount, 0);
 
     queue->nextEntryToWrite = 0;
-    SDL_SetAtomicU32(&queue->nextEntryToRead, 0);
+    SDL_SetAtomicInt(&queue->nextEntryToRead, 0);
 
     // TODO: Error reporting
     queue->semaphore = SDL_CreateSemaphore(0);
