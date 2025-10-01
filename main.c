@@ -314,8 +314,12 @@ int main(int argc, char **argv)
     if(inExeDirectory) {
         NOB_GO_REBUILD_URSELF(argc, argv);
 #if defined(_WIN32) && defined(SHORTCUT_PATH)
-        system("make_shortcut.bat "SHORTCUT_PATH);
-        nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
+        size_t exe_name_len = strlen(argv[0]);
+        if(exe_name_len < 5 || strcmp(argv[0] + exe_name_len - 4, ".exe")) nob_log(NOB_ERROR, "Need executable to have '.exe' extension for this.");
+        else {
+            system(nob_temp_sprintf("make_shortcut.bat %.*s "SHORTCUT_PATH, exe_name_len - 4, argv[0]));
+            nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
+        }
 #endif
     }
 

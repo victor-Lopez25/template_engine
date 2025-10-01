@@ -192,7 +192,7 @@ void AddWorkEntry(WorkQueue *queue, ThreadWorkCallback callback, void *data)
     WorkQueueEntry *entry = &queue->entries[queue->nextEntryToWrite];
     entry->callback = callback;
     entry->data = data;
-    SDL_AddAtomicU32(&queue->completionGoal, 1);
+    SDL_AddAtomicInt(&queue->completionGoal, 1);
     SDL_CompilerBarrier();
     queue->nextEntryToWrite = nextEntryToWrite;
     SDL_SignalSemaphore(queue->semaphore);
@@ -208,7 +208,7 @@ bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQue
         if(SDL_CompareAndSwapAtomicInt(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
             WorkQueueEntry *entry = &queue->entries[originalNextEntryToRead];
             entry->callback(spall_ctx, spall_buffer, entry->data);
-            SDL_AddAtomicU32(&queue->completionCount, 1);
+            SDL_AddAtomicInt(&queue->completionCount, 1);
         }
     } else {
         shouldSleep = true;
