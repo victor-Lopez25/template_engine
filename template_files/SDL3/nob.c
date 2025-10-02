@@ -67,7 +67,9 @@ int main(int argc, char **argv)
 #if defined(_MSC_VER)
     nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref", "/subsystem:console");
 #endif
+#if defined(_WIN32)
     cmd_cc_libpath(&cmd, "../lib");
+#endif
     cmd_cc_libs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
     nob_mkdir_if_not_exists("bin");

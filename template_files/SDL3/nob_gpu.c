@@ -141,9 +141,11 @@ bool CompileApp(Nob_Cmd *cmd)
     nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
 #if defined(_MSC_VER)
     nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s", "app" DLL_EXT), "-D_CRT_SECURE_NO_WARNINGS", "/link", "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
-    cmd_cc_libpath(cmd, "../lib");
 #else
     nob_cmd_append(cmd, "-o", "app" DLL_EXT, "-shared");
+#endif
+#if defined(_WIN32)
+    cmd_cc_libpath(cmd, "../lib");
 #endif
     cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 

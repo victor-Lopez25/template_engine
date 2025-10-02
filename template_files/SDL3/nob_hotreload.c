@@ -123,7 +123,9 @@ bool CompileApp(Nob_Cmd *cmd)
 #else
     nob_cmd_append(cmd, "-o", "app" DLL_EXT, "-shared");
 #endif
+#if defined(_WIN32)
     cmd_cc_libpath(cmd, "../lib");
+#endif
     cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
 #if defined(_MSC_VER)
