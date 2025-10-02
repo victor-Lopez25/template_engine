@@ -120,16 +120,30 @@ typedef struct {
     Uint64 fileTime;
 } ShaderInfo;
 
+typedef struct ProgramContext ProgramContext;
+
 typedef struct {
+    ProgramContext *ctx;
+    ShaderInfo vert;
+    ShaderInfo frag;
+    SDL_GPUGraphicsPipelineCreateInfo info;
+    SDL_GPUGraphicsPipeline **pipeline;
+    SDL_GPUColorTargetDescription *colorTargetDescs;
+    SDL_Mutex *mutex;
+    SDL_GPUColorTargetDescription colorDesc;
+} PipelineCompileContext;
+
+struct ProgramContext {
     ProgramInput input;
     SDL_Window *window;
     SDL_GPUDevice *gpu;
-    ShaderInfo vertexShader;
-    ShaderInfo fragmentShader;
 
     SDL_GPUGraphicsPipeline *fillPipeline;
     SDL_GPUGraphicsPipeline *linePipeline;
     bool wireframeMode;
+
+    PipelineCompileContext fillPipelineCompileCtx;
+    PipelineCompileContext linePipelineCompileCtx;
 
     SDL_GPUTextureFormat swapchainTextureFormat;
     Sint32 windowWidth;
@@ -147,7 +161,7 @@ typedef struct {
     SpallProfile spall_ctx;
 
     SDL_AtomicInt targetFPSMissedCause;
-} ProgramContext;
+};
 
 DLL_EXPORT size_t MemorySize(void) { return sizeof(ProgramContext); }
 
@@ -334,14 +348,7 @@ void FreeShader(SDL_GPUDevice *gpu, ShaderInfo *shader)
 
 bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDevice *gpu, ShaderInfo *info)
 {
-    Uint64 currentFileTime;
-    if(!GetLastWriteTime(info->filename, &currentFileTime) || currentFileTime == info->fileTime) {
-        Spall_BufferEnd(spall_ctx, spall_buffer);
-        return false;
-    }
-    
     Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
-    info->fileTime = currentFileTime;
 
     SDL_GPUShaderStage stage;
     Uint32 format;
@@ -432,27 +439,75 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
     return true;
 }
 
-SDL_GPUGraphicsPipeline *PipelineFromShaders(ProgramContext *ctx, ShaderInfo *vert, ShaderInfo *frag, SDL_GPUGraphicsPipelineCreateInfo *info, bool createAlways)
+int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, void *data)
 {
-    bool recompiledVert = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, vert);
-    bool recompiledFrag = CompileShader(&ctx->spall_ctx, &ctx->spall_buffer, ctx->gpu, frag);
-    if(!createAlways && !recompiledVert && !recompiledFrag) {
-        return NULL;
+    Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
+
+    PipelineCompileContext *info = (PipelineCompileContext*)data;
+
+    CompileShader(spall_ctx, spall_buffer, info->ctx->gpu, &info->vert);
+    CompileShader(spall_ctx, spall_buffer, info->ctx->gpu, &info->frag);
+
+    info->info.vertex_shader = info->vert.shader;
+    info->info.fragment_shader = info->frag.shader;
+
+    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(info->ctx->gpu, &info->info);
+
+    if(SDL_TryLockMutex(info->mutex)) {
+        *info->pipeline = pipeline;
+        SDL_UnlockMutex(info->mutex);
+    } else {
+        SDL_LockMutex(info->mutex);
+        *info->pipeline = pipeline;
+        SDL_UnlockMutex(info->mutex);
     }
-    Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
 
-    SDL_GPUColorTargetDescription colorTargetDesc = {.format = ctx->swapchainTextureFormat};
-    info->target_info.num_color_targets = 1;
-    info->target_info.color_target_descriptions = &colorTargetDesc;
-    info->primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    info->vertex_shader = vert->shader;
-    info->fragment_shader = frag->shader;
+    Spall_BufferEnd(spall_ctx, spall_buffer);
 
-    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(ctx->gpu, info);
+    return 0;
+}
 
-    Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
+void PipelineFromShaders(PipelineCompileContext *ctx, bool initTime)
+{
+    Uint64 currentFileTimeVert;
+    Uint64 currentFileTimeFrag;
 
-    return pipeline;
+    bool needRecompileVert = GetLastWriteTime(ctx->vert.filename, &currentFileTimeVert) && currentFileTimeVert != ctx->vert.fileTime;
+    ctx->vert.fileTime = currentFileTimeVert;
+    bool needRecompileFrag = GetLastWriteTime(ctx->frag.filename, &currentFileTimeFrag) && currentFileTimeFrag != ctx->frag.fileTime;
+    ctx->frag.fileTime = currentFileTimeFrag;
+
+    if(!initTime && !needRecompileVert && !needRecompileFrag) {
+        return;
+    }
+
+    Spall_BufferBegin(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer, __FUNCTION__);
+
+    if(initTime) {
+        PipelineFromShadersWork(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer, ctx);
+    } else {
+        AddWorkEntry(&ctx->ctx->workQueue, PipelineFromShadersWork, ctx);
+    }
+
+    Spall_BufferEnd(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer);
+}
+
+#define InitPipelineCompileContext(prog_ctx, ctx, vert, frag, pipeline) \
+    InitPipelineCompileContext_(prog_ctx, ctx, SHADER_DIRECTORY vert, SHADER_DIRECTORY frag, pipeline)
+bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContext *ctx, const char *vert, const char *frag, SDL_GPUGraphicsPipeline **pipeline)
+{
+    ctx->ctx = prog_ctx;
+    ctx->vert.filename = vert;
+    ctx->frag.filename = frag;
+    ctx->pipeline = pipeline;
+    if(!ctx->colorTargetDescs) {
+        ctx->colorDesc.format = prog_ctx->swapchainTextureFormat;
+        ctx->info.target_info.num_color_targets = 1;
+        ctx->info.target_info.color_target_descriptions = &ctx->colorDesc;
+    }
+    ctx->info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    ctx->mutex = SDL_CreateMutex();
+    return ctx->mutex != NULL;
 }
 
 DLL_EXPORT bool InitAll(void *rawdata)
@@ -518,19 +573,19 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     ctx->swapchainTextureFormat = SDL_GetGPUSwapchainTextureFormat(ctx->gpu, ctx->window);
 
-    ctx->vertexShader.filename = SHADER_DIRECTORY "shader.vert.hlsl";
-    ctx->fragmentShader.filename = SHADER_DIRECTORY "shader.frag.hlsl";
-
-    SDL_GPUGraphicsPipelineCreateInfo pipelineCreateInfo = {
-        .rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL,
-    };
-    ctx->fillPipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineCreateInfo, true);
+    ctx->fillPipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    InitPipelineCompileContext(ctx, &ctx->fillPipelineCompileCtx, 
+        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->fillPipeline);
+    PipelineFromShaders(&ctx->fillPipelineCompileCtx, true);
     if(!ctx->fillPipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create fill pipeline");
         return false;
     }
-    pipelineCreateInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
-    ctx->linePipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineCreateInfo, true);
+
+    ctx->linePipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+    InitPipelineCompileContext(ctx, &ctx->linePipelineCompileCtx, 
+        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->linePipeline);
+    PipelineFromShaders(&ctx->linePipelineCompileCtx, true);
     if(!ctx->linePipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create line pipeline");
         return false;
@@ -585,6 +640,15 @@ DLL_EXPORT void InitPartial(void *rawdata)
     (void) rawdata;
 }
 
+void FreePipelineCompileContext(PipelineCompileContext *ctx)
+{
+    FreeShader(ctx->ctx->gpu, &ctx->vert);
+    FreeShader(ctx->ctx->gpu, &ctx->frag);
+
+    SDL_ReleaseGPUGraphicsPipeline(ctx->ctx->gpu, *ctx->pipeline);
+    SDL_DestroyMutex(ctx->mutex);
+}
+
 DLL_EXPORT void DeInitAll(void *rawdata)
 {
     ProgramContext *ctx = (ProgramContext*)rawdata;
@@ -601,11 +665,8 @@ DLL_EXPORT void DeInitAll(void *rawdata)
 
     SDL_ShaderCross_Quit();
 
-    FreeShader(ctx->gpu, &ctx->vertexShader);
-    FreeShader(ctx->gpu, &ctx->fragmentShader);
-
-    SDL_ReleaseGPUGraphicsPipeline(ctx->gpu, ctx->fillPipeline);
-    SDL_ReleaseGPUGraphicsPipeline(ctx->gpu, ctx->linePipeline);
+    FreePipelineCompileContext(&ctx->fillPipelineCompileCtx);
+    FreePipelineCompileContext(&ctx->linePipelineCompileCtx);
 
     TTF_Quit();
 
@@ -643,10 +704,17 @@ void RenderAll(ProgramContext *ctx)
         };
         
         SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(cmdBuf, &colorTarget, 1, NULL);
-        SDL_BindGPUGraphicsPipeline(renderPass, ctx->wireframeMode ? ctx->linePipeline : ctx->fillPipeline);
+        if(ctx->wireframeMode) {
+            SDL_LockMutex(ctx->linePipelineCompileCtx.mutex);
+            SDL_BindGPUGraphicsPipeline(renderPass, ctx->linePipeline);
+        } else {
+            SDL_LockMutex(ctx->fillPipelineCompileCtx.mutex);
+            SDL_BindGPUGraphicsPipeline(renderPass, ctx->fillPipeline);
+        }
         SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
     
         SDL_EndGPURenderPass(renderPass);
+        SDL_UnlockMutex(ctx->wireframeMode ? ctx->linePipelineCompileCtx.mutex : ctx->fillPipelineCompileCtx.mutex);
     }
 
     ok = SDL_SubmitGPUCommandBuffer(cmdBuf);
@@ -744,17 +812,8 @@ DLL_EXPORT bool MainLoop(void *rawdata)
         ctx->wireframeMode = !ctx->wireframeMode;
     }
 
-    SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {0};
-    pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    SDL_GPUGraphicsPipeline *fillPipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineInfo, false);
-    if(fillPipeline) {
-        ctx->fillPipeline = fillPipeline;
-        pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
-        SDL_GPUGraphicsPipeline *linePipeline = PipelineFromShaders(ctx, &ctx->vertexShader, &ctx->fragmentShader, &pipelineInfo, true);
-        if(linePipeline) {
-            ctx->linePipeline = linePipeline;
-        }
-    }
+    PipelineFromShaders(&ctx->fillPipelineCompileCtx, false);
+    PipelineFromShaders(&ctx->linePipelineCompileCtx, false);
 
     RenderAll(ctx);
 
