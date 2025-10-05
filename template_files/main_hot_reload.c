@@ -73,13 +73,13 @@ bool LoadProgramApi(ProgramApi *api, int version)
 
             api->library = LoadLibraryA(dllname);
             if(api->library) {
-                api->initAll = (BoolVoidStarProc)GetProcAddress(api->library, "InitAll");
-                api->initPartial = (BoolVoidStarProc)GetProcAddress(api->library, "InitPartial");
-                api->deInitAll = (VoidStarProc)GetProcAddress(api->library, "DeInitAll");
-                api->deInitPartial = (VoidStarProc)GetProcAddress(api->library, "DeInitPartial");
+                api->initAll = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "InitAll");
+                api->initPartial = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "InitPartial");
+                api->deInitAll = (VoidStarProc)(void*)GetProcAddress(api->library, "DeInitAll");
+                api->deInitPartial = (VoidStarProc)(void*)GetProcAddress(api->library, "DeInitPartial");
                 
-                api->memorySize = (MemorySizeProc)GetProcAddress(api->library, "MemorySize");
-                api->mainLoop = (BoolVoidStarProc)GetProcAddress(api->library, "MainLoop");
+                api->memorySize = (MemorySizeProc)(void*)GetProcAddress(api->library, "MemorySize");
+                api->mainLoop = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "MainLoop");
 
                 ok = api->initAll && api->initPartial && api->deInitAll && api->deInitPartial && api->memorySize && api->mainLoop;
 
@@ -97,7 +97,7 @@ void UnloadApi(ProgramApi *api)
 {
     if(api->library) {
         if(!FreeLibrary(api->library)) {
-            fprintf(stderr, "Could not unload " DLL_NAME ": %u", GetLastError());
+            fprintf(stderr, "Could not unload " DLL_NAME ": %lu", GetLastError());
         }
     }
     size_t mark = nob_temp_save();
