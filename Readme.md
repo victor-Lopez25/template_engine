@@ -7,6 +7,8 @@ Included templates:
  - SDL3-hotreload: SDL3 template + hot reloading
  - SDL3-gpu: SDL3-hotreload template + rotating triangle on gpu + hot reloaded shaders with reflection! (still a bit work in progress)
 
+Even though there is a template called SDL3-gpu, this does not mean the others don't use the gpu, SDL3-gpu uses the SDL3_gpu api and the other SDL3 templates use the SDL3_renderer api, that's the difference.
+
 I will look into issues but in general, I won't take pull requests unless they are for minor changes.
 
 ### Usage
