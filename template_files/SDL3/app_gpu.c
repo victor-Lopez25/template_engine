@@ -124,6 +124,7 @@ typedef struct ProgramContext ProgramContext;
 
 typedef struct {
     ProgramContext *ctx;
+    Uint32 (*VertexInstanceSize)(void);
     ShaderInfo vert;
     ShaderInfo frag;
     SDL_GPUGraphicsPipelineCreateInfo info;
@@ -131,7 +132,21 @@ typedef struct {
     SDL_GPUColorTargetDescription *colorTargetDescs;
     SDL_Mutex *mutex;
     SDL_GPUColorTargetDescription colorDesc;
+    SDL_AtomicInt recompiling;
 } PipelineCompileContext;
+
+#define VERTEX_INSTANCE(name, body) \
+    typedef struct body name; \
+    Uint32 VertexInstanceSize_##name(void) { return (Uint32)sizeof(name); }
+
+typedef struct {
+    float x;
+    float y;
+} Vec2f;
+
+VERTEX_INSTANCE(VertexInstance, {
+    Vec2f position;
+});
 
 struct ProgramContext {
     ProgramInput input;
@@ -142,6 +157,8 @@ struct ProgramContext {
     SDL_GPUGraphicsPipeline *linePipeline;
     bool wireframeMode;
 
+    SDL_GPUBuffer *vertexBuffer;
+
     PipelineCompileContext fillPipelineCompileCtx;
     PipelineCompileContext linePipelineCompileCtx;
 
@@ -150,6 +167,10 @@ struct ProgramContext {
     Sint32 windowHeight;
     float deltaTime;
     float targetFPS;
+
+    SDL_GPUTransferBuffer *transferBuf;
+    VertexInstance triangleVertices[3];
+    float triangleRotation;
 
     SDL_GPUTextureFormat depthTextureFormat;
     SDL_GPUTexture *depthTexture;
@@ -164,6 +185,10 @@ struct ProgramContext {
 };
 
 DLL_EXPORT size_t MemorySize(void) { return sizeof(ProgramContext); }
+
+float Distance2f(float x, float y) {
+    return SDL_sqrtf(x*x + y*y);
+}
 
 void RenderAll(ProgramContext *ctx);
 
@@ -310,7 +335,7 @@ bool InitWorkQueue(SpallProfile *spall_ctx, WorkQueue *queue, Uint32 threadCount
 
 #define SHADER_FORMAT_HLSL 0
 #define SHADER_FORMAT_SPIRV 1
-bool GetShaderStageFormatFromName(const char *shaderFile, SDL_GPUShaderStage *stage, Uint32 *format)
+bool GetShaderStageFormatFromName(const char *shaderFile, SDL_ShaderCross_ShaderStage *stage, Uint32 *format)
 {
     char *c = (char*)shaderFile + SDL_strlen(shaderFile);
     while(c > shaderFile && *c != '.') c--;
@@ -350,7 +375,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
 {
     Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
 
-    SDL_GPUShaderStage stage;
+    SDL_ShaderCross_ShaderStage stage;
     Uint32 format;
     if(!GetShaderStageFormatFromName(info->filename, &stage, &format)) {
         Spall_BufferEnd(spall_ctx, spall_buffer);
@@ -381,6 +406,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
             bytecode = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &bytecodeSize);
             SDL_free((void*)shaderFileData);
             if(!bytecode) {
+                SDL_Log("ERROR: %s: %s", info->filename, SDL_GetError());
                 Spall_BufferEnd(spall_ctx, spall_buffer);
                 return false;
             }
@@ -439,6 +465,9 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
     return true;
 }
 
+SDL_GPUVertexElementFormat GPUVertexElementFormat_From_Metadata(SDL_ShaderCross_IOVarMetadata *meta);
+Uint32 GetGPUVariableSize_From_Metadata(SDL_ShaderCross_IOVarMetadata *meta);
+
 int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, void *data)
 {
     Spall_BufferBegin(spall_ctx, spall_buffer, __FUNCTION__);
@@ -451,8 +480,45 @@ int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, 
     info->info.vertex_shader = info->vert.shader;
     info->info.fragment_shader = info->frag.shader;
 
-    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(info->ctx->gpu, &info->info);
+    SDL_GPUVertexBufferDescription vertBufDesc[] = {
+        {.slot = 0, .pitch = 0}
+    };
 
+//#error TODO: SDL_Shadercross meta as I'm using it cannot figure out the input struct, what should I do about this?
+
+    SDL_GPUVertexAttribute *attrs = 0;
+    if(info->vert.meta->num_inputs > 0) {
+        Uint32 currentOffset = 0;
+        attrs = SDL_calloc(info->vert.meta->num_inputs, sizeof(SDL_GPUVertexAttribute));
+        for(Uint32 i = 0; i < info->vert.meta->num_inputs; i++) {
+            SDL_ShaderCross_IOVarMetadata *var = &info->vert.meta->inputs[i];
+            attrs[i].location = var->location;
+            attrs[i].format = GPUVertexElementFormat_From_Metadata(var);
+            attrs[i].offset = currentOffset;
+            currentOffset += GetGPUVariableSize_From_Metadata(var);
+        }
+        if(currentOffset != info->VertexInstanceSize()) {
+            SDL_Log("Vertex input attributes changed for shader '%s' or in the non shader source ("__FILE__" unless defined elsewhere)", info->vert.filename);
+            return 0;
+        }
+    
+        vertBufDesc[0].pitch = info->VertexInstanceSize();
+
+        info->info.vertex_input_state.num_vertex_buffers = 1;
+        info->info.vertex_input_state.vertex_buffer_descriptions = vertBufDesc;
+        info->info.vertex_input_state.num_vertex_attributes = info->vert.meta->num_inputs;
+        info->info.vertex_input_state.vertex_attributes = attrs;
+    } else {
+        info->info.vertex_input_state.num_vertex_buffers = 0;
+        info->info.vertex_input_state.vertex_buffer_descriptions = 0;
+        info->info.vertex_input_state.num_vertex_attributes = 0;
+        info->info.vertex_input_state.vertex_attributes = 0;
+    }
+
+    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(info->ctx->gpu, &info->info);
+    if(attrs) SDL_free(attrs);
+
+    SDL_GPUGraphicsPipeline *prevPipeline = *info->pipeline;
     if(SDL_TryLockMutex(info->mutex)) {
         *info->pipeline = pipeline;
         SDL_UnlockMutex(info->mutex);
@@ -461,6 +527,8 @@ int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, 
         *info->pipeline = pipeline;
         SDL_UnlockMutex(info->mutex);
     }
+    SDL_ReleaseGPUGraphicsPipeline(info->ctx->gpu, prevPipeline);
+    SDL_SetAtomicInt(&info->recompiling, 0);
 
     Spall_BufferEnd(spall_ctx, spall_buffer);
 
@@ -481,25 +549,24 @@ void PipelineFromShaders(PipelineCompileContext *ctx, bool initTime)
         return;
     }
 
-    Spall_BufferBegin(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer, __FUNCTION__);
-
     if(initTime) {
         PipelineFromShadersWork(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer, ctx);
     } else {
-        AddWorkEntry(&ctx->ctx->workQueue, PipelineFromShadersWork, ctx);
+        if(!SDL_SetAtomicInt(&ctx->recompiling, 1)) {
+            AddWorkEntry(&ctx->ctx->workQueue, PipelineFromShadersWork, ctx);
+        }
     }
-
-    Spall_BufferEnd(&ctx->ctx->spall_ctx, &ctx->ctx->spall_buffer);
 }
 
-#define InitPipelineCompileContext(prog_ctx, ctx, vert, frag, pipeline) \
-    InitPipelineCompileContext_(prog_ctx, ctx, SHADER_DIRECTORY vert, SHADER_DIRECTORY frag, pipeline)
-bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContext *ctx, const char *vert, const char *frag, SDL_GPUGraphicsPipeline **pipeline)
+#define InitPipelineCompileContext(prog_ctx, ctx, vert, frag, pipeline, vertInstanceStructureName) \
+    InitPipelineCompileContext_(prog_ctx, ctx, SHADER_DIRECTORY vert, SHADER_DIRECTORY frag, pipeline, VertexInstanceSize_##vertInstanceStructureName)
+bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContext *ctx, const char *vert, const char *frag, SDL_GPUGraphicsPipeline **pipeline, Uint32 (*VertexInstanceSize)(void))
 {
     ctx->ctx = prog_ctx;
     ctx->vert.filename = vert;
     ctx->frag.filename = frag;
     ctx->pipeline = pipeline;
+    ctx->VertexInstanceSize = VertexInstanceSize;
     if(!ctx->colorTargetDescs) {
         ctx->colorDesc.format = prog_ctx->swapchainTextureFormat;
         ctx->info.target_info.num_color_targets = 1;
@@ -508,6 +575,29 @@ bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContex
     ctx->info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     ctx->mutex = SDL_CreateMutex();
     return ctx->mutex != NULL;
+}
+
+void UploadVertices(ProgramContext *ctx, SDL_GPUCommandBuffer *cmdBuf)
+{
+    float dangle = 2.0f*SDL_PI_F / 3.0f;
+
+    for(int i = 0; i < 3; i++) {
+        float cs = SDL_cosf(dangle*i + ctx->triangleRotation);
+        float sn = SDL_sinf(dangle*i + ctx->triangleRotation);
+        ctx->triangleVertices[i].position.x = cs/2.0f;
+        ctx->triangleVertices[i].position.y = sn/2.0f;
+    }
+
+    ctx->triangleRotation += SDL_PI_F*ctx->deltaTime;
+    if(ctx->triangleRotation > (2.0f*SDL_PI_F)) ctx->triangleRotation -= 2.0f*SDL_PI_F;
+
+    void *transferMem = SDL_MapGPUTransferBuffer(ctx->gpu, ctx->transferBuf, true);
+    SDL_memcpy(transferMem, ctx->triangleVertices, sizeof(ctx->triangleVertices));
+    SDL_UnmapGPUTransferBuffer(ctx->gpu, ctx->transferBuf);
+
+    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmdBuf);
+    SDL_UploadToGPUBuffer(copyPass, &(SDL_GPUTransferBufferLocation){.transfer_buffer = ctx->transferBuf}, &(SDL_GPUBufferRegion){.buffer = ctx->vertexBuffer, .size = sizeof(ctx->triangleVertices)}, true);
+    SDL_EndGPUCopyPass(copyPass);
 }
 
 DLL_EXPORT bool InitAll(void *rawdata)
@@ -560,10 +650,20 @@ DLL_EXPORT bool InitAll(void *rawdata)
         return false;
     }
 
+    const char *driver = SDL_GetGPUDeviceDriver(ctx->gpu);
+    if(driver) {
+        SDL_Log("Gpu device driver: %s", driver);
+    }
+
     if(!SDL_ClaimWindowForGPUDevice(ctx->gpu, ctx->window)) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not claim window for gpu device: %s", SDL_GetError());
         return false;
     }
+    
+    ctx->vertexBuffer = SDL_CreateGPUBuffer(ctx->gpu, &(SDL_GPUBufferCreateInfo){
+        .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
+        .size = 3 * sizeof(VertexInstance),
+    });
 
 //#pragma message("TODO: SDR linear is not always supported, use: 'SDL_WindowSupportsGPUSwapchainComposition' to check")
 //    if(!SDL_SetGPUSwapchainParameters(ctx->gpu, ctx->window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR, SDL_GPU_PRESENTMODE_VSYNC)) {
@@ -574,8 +674,9 @@ DLL_EXPORT bool InitAll(void *rawdata)
     ctx->swapchainTextureFormat = SDL_GetGPUSwapchainTextureFormat(ctx->gpu, ctx->window);
 
     ctx->fillPipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+
     InitPipelineCompileContext(ctx, &ctx->fillPipelineCompileCtx, 
-        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->fillPipeline);
+        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->fillPipeline, VertexInstance);
     PipelineFromShaders(&ctx->fillPipelineCompileCtx, true);
     if(!ctx->fillPipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create fill pipeline");
@@ -584,17 +685,17 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     ctx->linePipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
     InitPipelineCompileContext(ctx, &ctx->linePipelineCompileCtx, 
-        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->linePipeline);
+        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->linePipeline, VertexInstance);
     PipelineFromShaders(&ctx->linePipelineCompileCtx, true);
     if(!ctx->linePipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create line pipeline");
         return false;
     }
 
-    const char *driver = SDL_GetGPUDeviceDriver(ctx->gpu);
-    if(driver) {
-        SDL_Log("Gpu device driver: %s", driver);
-    }
+    ctx->transferBuf = SDL_CreateGPUTransferBuffer(ctx->gpu, &(SDL_GPUTransferBufferCreateInfo){
+            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = 3 * sizeof(VertexInstance),
+        });
 
     ctx->depthTextureFormat = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
 #define TestDepthTextureFormat(format) if(SDL_GPUTextureSupportsFormat(ctx->gpu, format, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) ctx->depthTextureFormat = format
@@ -667,6 +768,7 @@ DLL_EXPORT void DeInitAll(void *rawdata)
 
     FreePipelineCompileContext(&ctx->fillPipelineCompileCtx);
     FreePipelineCompileContext(&ctx->linePipelineCompileCtx);
+    SDL_ReleaseGPUTransferBuffer(ctx->gpu, ctx->transferBuf);
 
     TTF_Quit();
 
@@ -685,6 +787,7 @@ void RenderAll(ProgramContext *ctx)
     Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
 
     SDL_GPUCommandBuffer *cmdBuf = SDL_AcquireGPUCommandBuffer(ctx->gpu);
+
     SDL_GPUTexture *swapchainTexture;
     bool ok = SDL_WaitAndAcquireGPUSwapchainTexture(cmdBuf, ctx->window, &swapchainTexture, 0, 0);
     if(!ok) {
@@ -694,6 +797,7 @@ void RenderAll(ProgramContext *ctx)
 
     if(swapchainTexture) {
         // render here
+        UploadVertices(ctx, cmdBuf);
 
         SDL_FColor clearColor = {0.12f, 0.24f, 0.24f, 1.0f};
         SDL_GPUColorTargetInfo colorTarget = {
@@ -711,9 +815,13 @@ void RenderAll(ProgramContext *ctx)
             SDL_LockMutex(ctx->fillPipelineCompileCtx.mutex);
             SDL_BindGPUGraphicsPipeline(renderPass, ctx->fillPipeline);
         }
+        SDL_BindGPUVertexBuffers(renderPass, 0, &(SDL_GPUBufferBinding){
+                .buffer = ctx->vertexBuffer,
+            }, 1);
         SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
     
         SDL_EndGPURenderPass(renderPass);
+        // NOTE: If this doesn't work, move it to after SDL_SubmitGPUCommandBuffer
         SDL_UnlockMutex(ctx->wireframeMode ? ctx->linePipelineCompileCtx.mutex : ctx->fillPipelineCompileCtx.mutex);
     }
 
@@ -833,4 +941,86 @@ DLL_EXPORT bool MainLoop(void *rawdata)
     ctx->deltaTime = (float)difTicks/1000000000.0f;
 
     return quit;
+}
+
+SDL_GPUVertexElementFormat GPUVertexElementFormat_From_Metadata(SDL_ShaderCross_IOVarMetadata *meta)
+{
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UNKNOWN) {
+        SDL_assert(false);
+        return SDL_GPU_VERTEXELEMENTFORMAT_INVALID;
+    }
+
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT8) {
+        SDL_assert(meta->vector_size == 2 || meta->vector_size == 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_BYTE2 + meta->vector_size/2 - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT8) {
+        SDL_assert(meta->vector_size == 2 || meta->vector_size == 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_UBYTE2 + meta->vector_size/2 - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT16) {
+        SDL_assert(meta->vector_size == 2 || meta->vector_size == 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_SHORT2 + meta->vector_size/2 - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT16) {
+        SDL_assert(meta->vector_size == 2 || meta->vector_size == 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_USHORT2 + meta->vector_size/2 - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT32) {
+        SDL_assert(meta->vector_size >= 1 && meta->vector_size <= 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_INT + meta->vector_size - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT32) {
+        SDL_assert(meta->vector_size >= 1 && meta->vector_size <= 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_UINT + meta->vector_size - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT64) {
+        SDL_assert(meta->vector_size == 1 || meta->vector_size == 2);
+        return SDL_GPU_VERTEXELEMENTFORMAT_INT + meta->vector_size*2;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT64) {
+        SDL_assert(meta->vector_size == 1 || meta->vector_size == 2);
+        return SDL_GPU_VERTEXELEMENTFORMAT_UINT + meta->vector_size*2;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT16) {
+        SDL_assert(meta->vector_size == 2 || meta->vector_size == 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_HALF2 + meta->vector_size/2 - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT32) {
+        SDL_assert(meta->vector_size >= 1 && meta->vector_size <= 4);
+        return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT + meta->vector_size - 1;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT64) {
+        SDL_assert(meta->vector_size == 1 || meta->vector_size == 2);
+        return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT + meta->vector_size*2;
+    }
+    return SDL_GPU_VERTEXELEMENTFORMAT_INVALID;
+}
+
+Uint32 GetGPUVariableSize_From_Metadata(SDL_ShaderCross_IOVarMetadata *meta)
+{
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UNKNOWN) {
+        return 0;
+    }
+
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT8 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT8) {
+        return meta->vector_size;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT16 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT16 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT16) {
+        return sizeof(uint16_t)*meta->vector_size;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT32 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT32 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT32) {
+        return sizeof(uint32_t)*meta->vector_size;
+    }
+    if(meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_INT64 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_UINT64 ||
+       meta->vector_type == SDL_SHADERCROSS_IOVAR_TYPE_FLOAT64) {
+        return sizeof(uint64_t)*meta->vector_size;
+    }
+    return 0;
 }
