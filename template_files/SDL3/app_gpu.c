@@ -124,7 +124,7 @@ typedef struct ProgramContext ProgramContext;
 
 typedef struct {
     ProgramContext *ctx;
-    Uint32 (*VertexInstanceSize)(void);
+    bool (*CheckVertexInstanceSize)(Uint32);
     ShaderInfo vert;
     ShaderInfo frag;
     SDL_GPUGraphicsPipelineCreateInfo info;
@@ -135,9 +135,12 @@ typedef struct {
     SDL_AtomicInt recompiling;
 } PipelineCompileContext;
 
+// In case you want to disable this
+bool CheckVertexInstanceSize_Default(Uint32 check) { (void)check; return true; }
+
 #define VERTEX_INSTANCE(name, body) \
     typedef struct body name; \
-    Uint32 VertexInstanceSize_##name(void) { return (Uint32)sizeof(name); }
+    bool CheckVertexInstanceSize_##name(Uint32 check) { return check == (Uint32)sizeof(name); }
 
 typedef struct {
     float x;
@@ -484,8 +487,6 @@ int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, 
         {.slot = 0, .pitch = 0}
     };
 
-//#error TODO: SDL_Shadercross meta as I'm using it cannot figure out the input struct, what should I do about this?
-
     SDL_GPUVertexAttribute *attrs = 0;
     if(info->vert.meta->num_inputs > 0) {
         Uint32 currentOffset = 0;
@@ -497,12 +498,12 @@ int PipelineFromShadersWork(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, 
             attrs[i].offset = currentOffset;
             currentOffset += GetGPUVariableSize_From_Metadata(var);
         }
-        if(currentOffset != info->VertexInstanceSize()) {
+        if(!info->CheckVertexInstanceSize(currentOffset)) {
             SDL_Log("Vertex input attributes changed for shader '%s' or in the non shader source ("__FILE__" unless defined elsewhere)", info->vert.filename);
             return 0;
         }
     
-        vertBufDesc[0].pitch = info->VertexInstanceSize();
+        vertBufDesc[0].pitch = currentOffset;
 
         info->info.vertex_input_state.num_vertex_buffers = 1;
         info->info.vertex_input_state.vertex_buffer_descriptions = vertBufDesc;
@@ -559,14 +560,16 @@ void PipelineFromShaders(PipelineCompileContext *ctx, bool initTime)
 }
 
 #define InitPipelineCompileContext(prog_ctx, ctx, vert, frag, pipeline, vertInstanceStructureName) \
-    InitPipelineCompileContext_(prog_ctx, ctx, SHADER_DIRECTORY vert, SHADER_DIRECTORY frag, pipeline, VertexInstanceSize_##vertInstanceStructureName)
-bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContext *ctx, const char *vert, const char *frag, SDL_GPUGraphicsPipeline **pipeline, Uint32 (*VertexInstanceSize)(void))
+    InitPipelineCompileContext_(prog_ctx, ctx, SHADER_DIRECTORY vert, SHADER_DIRECTORY frag, pipeline, CheckVertexInstanceSize_##vertInstanceStructureName)
+bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContext *ctx, const char *vert, const char *frag, SDL_GPUGraphicsPipeline **pipeline, bool (*CheckVertexInstanceSize)(Uint32))
 {
     ctx->ctx = prog_ctx;
     ctx->vert.filename = vert;
     ctx->frag.filename = frag;
     ctx->pipeline = pipeline;
-    ctx->VertexInstanceSize = VertexInstanceSize;
+    if(CheckVertexInstanceSize) ctx->CheckVertexInstanceSize = CheckVertexInstanceSize;
+    else ctx->CheckVertexInstanceSize = CheckVertexInstanceSize_Default;
+
     if(!ctx->colorTargetDescs) {
         ctx->colorDesc.format = prog_ctx->swapchainTextureFormat;
         ctx->info.target_info.num_color_targets = 1;
