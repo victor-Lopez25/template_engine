@@ -1,10 +1,11 @@
 ## template engine for projects
 
-This is intended as a compilation of templates I use
+This is intended as a compilation of templates I use to remove the need to do every time a lot of 'glue' when starting a project (eg. linking libraries, creating scripts for compilation, etc.)
 
 Included templates:
  - SDL3: SDL_image, SDL_ttf setup + A thread pool made by yours truely (doesn't support adding work from multiple threads)
  - SDL3-hotreload: SDL3 template + hot reloading
+ - SDL3-gpu: SDL3-hotreload template + rotating triangle on gpu + hot reloaded shaders with reflection! (still a bit work in progress)
 
 I will look into issues but in general, I won't take pull requests unless they are for minor changes.
 
@@ -16,7 +17,7 @@ Once compiled, you may run template_engine from a different directory like follo
 # example directory
 mkdir temp
 cd temp
-../template_engine [SDL3/SDL3-hotreload]
+../template_engine <template name>
 ```
 
 ### Building
