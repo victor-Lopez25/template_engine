@@ -1698,7 +1698,7 @@ NOBDEF bool nob_copy_directory_recursively_impl(const char *src_path, const char
                 nob_sb_append_cstr(&dst_sb, children.items[i]);
                 nob_sb_append_null(&dst_sb);
 
-                if (!nob_copy_directory_recursively(src_sb.items, dst_sb.items)) {
+                if (!nob_copy_directory_recursively_impl(src_sb.items, dst_sb.items, ext)) {
                     nob_return_defer(false);
                 }
             }
