@@ -178,6 +178,8 @@ void DoTemplate(Template chosen)
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_gpu.c", selfPath), "nob.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README_gpu.md", selfPath), "README.md");
+
+            nob_copy_file(nob_temp_sprintf("%s/template_files/resources/cat.jpg", selfPath), "cat.jpg");
         } break;
 
         case Template_None: case Count_Templates: break;
