@@ -98,11 +98,11 @@ typedef struct {
 } InputButton;
 
 typedef struct {
-    bool regularKeysDown[0xFF];
-    bool regularKeysUp[0xFF];
-    bool regularKeysPressed[0xFF];
-    bool regularKeysReleased[0xFF];
-    // any other keys with SDLK_xyz > 0xFF
+    bool regularKeysDown[0xFFF];
+    bool regularKeysUp[0xFFF];
+    bool regularKeysPressed[0xFFF];
+    bool regularKeysReleased[0xFFF];
+    // any other keys with SDLK_xyz > 0xFFF
 
     InputButton mouseLeft;
     InputButton mouseMiddle;
@@ -149,6 +149,7 @@ typedef struct {
 
 VERTEX_INSTANCE(VertexInstance, {
     Vec2f position;
+    Vec2f uv;
 });
 
 struct ProgramContext {
@@ -171,9 +172,12 @@ struct ProgramContext {
     float deltaTime;
     float targetFPS;
 
+    SDL_GPUTexture *catTexture;
+    SDL_GPUSampler *sampler;
     SDL_GPUTransferBuffer *transferBuf;
-    VertexInstance triangleVertices[3];
-    float triangleRotation;
+    VertexInstance rectVertices[6];
+    float rotationSpeed;
+    bool rotating;
 
     SDL_GPUTextureFormat depthTextureFormat;
     SDL_GPUTexture *depthTexture;
@@ -402,8 +406,6 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
                 .include_dir = 0,
                 .defines = 0,
                 .shader_stage = stage,
-                .enable_debug = true,
-                .name = 0,
                 .props = 0,
             };
             bytecode = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &bytecodeSize);
@@ -436,8 +438,6 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
             .bytecode_size = bytecodeSize,
             .entrypoint = "main",
             .shader_stage = stage,
-            .enable_debug = true,
-            .name = info->filename,
             .props = 0,
         };
 
@@ -449,7 +449,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
             return false;
         }
 
-        shader = SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(gpu, &spvInfo, meta, 0);
+        shader = SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(gpu, &spvInfo, &meta->resource_info, 0);
         if(!shader) {
             SDL_free(bytecode);
             SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not compile shader '%s'", info->filename);
@@ -582,25 +582,85 @@ bool InitPipelineCompileContext_(ProgramContext *prog_ctx, PipelineCompileContex
 
 void UploadVertices(ProgramContext *ctx, SDL_GPUCommandBuffer *cmdBuf)
 {
-    float dangle = 2.0f*SDL_PI_F / 3.0f;
+    if(ctx->rotating) {
+        ctx->rotationSpeed = SDL_PI_F*ctx->deltaTime;
 
-    for(int i = 0; i < 3; i++) {
-        float cs = SDL_cosf(dangle*i + ctx->triangleRotation);
-        float sn = SDL_sinf(dangle*i + ctx->triangleRotation);
-        ctx->triangleVertices[i].position.x = cs/2.0f;
-        ctx->triangleVertices[i].position.y = sn/2.0f;
+        float cs = SDL_cosf(ctx->rotationSpeed);
+        float sn = SDL_sinf(ctx->rotationSpeed);
+        for(size_t i = 0; i < SDL_arraysize(ctx->rectVertices); i++) {
+            float x = ctx->rectVertices[i].position.x;
+            float y = ctx->rectVertices[i].position.y;
+            ctx->rectVertices[i].position.x = x*cs - y*sn;
+            ctx->rectVertices[i].position.y = x*sn + y*cs;
+        }
     }
 
-    ctx->triangleRotation += SDL_PI_F*ctx->deltaTime;
-    if(ctx->triangleRotation > (2.0f*SDL_PI_F)) ctx->triangleRotation -= 2.0f*SDL_PI_F;
-
     void *transferMem = SDL_MapGPUTransferBuffer(ctx->gpu, ctx->transferBuf, true);
-    SDL_memcpy(transferMem, ctx->triangleVertices, sizeof(ctx->triangleVertices));
+    SDL_memcpy(transferMem, ctx->rectVertices, sizeof(ctx->rectVertices));
     SDL_UnmapGPUTransferBuffer(ctx->gpu, ctx->transferBuf);
 
     SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmdBuf);
-    SDL_UploadToGPUBuffer(copyPass, &(SDL_GPUTransferBufferLocation){.transfer_buffer = ctx->transferBuf}, &(SDL_GPUBufferRegion){.buffer = ctx->vertexBuffer, .size = sizeof(ctx->triangleVertices)}, true);
+    SDL_UploadToGPUBuffer(copyPass, &(SDL_GPUTransferBufferLocation){.transfer_buffer = ctx->transferBuf}, &(SDL_GPUBufferRegion){.buffer = ctx->vertexBuffer, .size = sizeof(ctx->rectVertices)}, true);
     SDL_EndGPUCopyPass(copyPass);
+}
+
+SDL_GPUTexture *GPU_UploadTexture(SDL_GPUDevice *gpu, SDL_GPUCopyPass *copyPass, const char *file, float *sizeRatio)
+{
+    SDL_assert(sizeRatio);
+    SDL_Surface *surface_src = IMG_Load(file);
+    if(!surface_src) {
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not load %s: %s", file, SDL_GetError());
+        return 0;
+    }
+
+    SDL_Surface *surface = SDL_ConvertSurface(surface_src, SDL_PIXELFORMAT_RGBA32);
+    if(!surface) {
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not load %s: %s", file, SDL_GetError());
+        SDL_DestroySurface(surface_src);
+        return 0;
+    }
+
+    SDL_GPUTextureFormat format = SDL_GetGPUTextureFormatFromPixelFormat(surface->format);
+    SDL_GPUTexture *texture = SDL_CreateGPUTexture(gpu, &(SDL_GPUTextureCreateInfo){
+        .type = SDL_GPU_TEXTURETYPE_2D,
+        .format = format,
+        .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+        .width = (Uint32)surface->w,
+        .height = (Uint32)surface->h,
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+    });
+
+    size_t size = surface->w*surface->h*sizeof(Uint32);
+    if(size > SDL_MAX_SINT32) {
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not upload %s image to gpu: Too large (size = %llu)", file, size);
+        SDL_DestroySurface(surface_src);
+        SDL_DestroySurface(surface);
+        return false;
+    }
+
+    SDL_GPUTransferBuffer *texTransferBuf =
+        SDL_CreateGPUTransferBuffer(gpu, &(SDL_GPUTransferBufferCreateInfo){
+            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = (Uint32)size,
+        });
+
+    void *mem = SDL_MapGPUTransferBuffer(gpu, texTransferBuf, false);
+    SDL_memcpy(mem, surface->pixels, size);
+    SDL_UnmapGPUTransferBuffer(gpu, texTransferBuf);
+
+    SDL_UploadToGPUTexture(copyPass, 
+        &(SDL_GPUTextureTransferInfo){.transfer_buffer = texTransferBuf}, 
+        &(SDL_GPUTextureRegion){.texture = texture, .w = (Uint32)surface->w, .h = (Uint32)surface->h, .d = 1},
+        false);
+
+    *sizeRatio = (float)surface->w/(float)surface->h;
+
+    SDL_ReleaseGPUTransferBuffer(gpu, texTransferBuf);
+    SDL_DestroySurface(surface_src);
+    SDL_DestroySurface(surface);
+
+    return texture;
 }
 
 DLL_EXPORT void InitPartial(void *rawdata)
@@ -651,8 +711,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
         return false;
     }
 
-    // temp: SDL_GPU_SHADERFORMAT_SPIRV | 
-    ctx->gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, true, 0);
+    ctx->gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, true, 0);
     if(!ctx->gpu) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create gpu device: %s", SDL_GetError());
         return false;
@@ -661,6 +720,8 @@ DLL_EXPORT bool InitAll(void *rawdata)
     const char *driver = SDL_GetGPUDeviceDriver(ctx->gpu);
     if(driver) {
         SDL_Log("Gpu device driver: %s", driver);
+        int sdl_image_version = IMG_Version();
+        SDL_Log("SDL_image version: %d.%d.%d", sdl_image_version/1000000, (sdl_image_version/1000)%1000, sdl_image_version%1000);
     }
 
     if(!SDL_ClaimWindowForGPUDevice(ctx->gpu, ctx->window)) {
@@ -670,7 +731,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
     
     ctx->vertexBuffer = SDL_CreateGPUBuffer(ctx->gpu, &(SDL_GPUBufferCreateInfo){
         .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
-        .size = 3 * sizeof(VertexInstance),
+        .size = sizeof(ctx->rectVertices),
     });
 
 //#pragma message("TODO: SDR linear is not always supported, use: 'SDL_WindowSupportsGPUSwapchainComposition' to check")
@@ -700,9 +761,19 @@ DLL_EXPORT bool InitAll(void *rawdata)
         return false;
     }
 
+    ctx->sampler = SDL_CreateGPUSampler(ctx->gpu, &(SDL_GPUSamplerCreateInfo){0});
+    float imageRatio = 1.0f;
+    {
+        SDL_GPUCommandBuffer *cmdBuf = SDL_AcquireGPUCommandBuffer(ctx->gpu);
+        SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmdBuf);
+        ctx->catTexture = GPU_UploadTexture(ctx->gpu, copyPass, "resources/cat.jpg", &imageRatio);
+        SDL_EndGPUCopyPass(copyPass);
+        SDL_SubmitGPUCommandBuffer(cmdBuf);
+    }
+
     ctx->transferBuf = SDL_CreateGPUTransferBuffer(ctx->gpu, &(SDL_GPUTransferBufferCreateInfo){
             .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-            .size = 3 * sizeof(VertexInstance),
+            .size = sizeof(ctx->rectVertices),
         });
 
     ctx->depthTextureFormat = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
@@ -726,6 +797,43 @@ DLL_EXPORT bool InitAll(void *rawdata)
     if(!ctx->depthTexture) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create depth texture: %s", SDL_GetError());
         return false;
+    }
+
+    {
+        float x, y;
+        if(imageRatio > 1.0f) {
+            x = 0.6f;
+            y = 0.6f / imageRatio;
+        } else {
+            y = 0.6f;
+            x = 0.6f / imageRatio;
+        }
+
+        /* first triangle:
+            |\
+            | \
+            |__\
+        */
+        ctx->rectVertices[0].uv = (Vec2f){0.0, 0.0};
+        ctx->rectVertices[0].position = (Vec2f){-x, y};
+        ctx->rectVertices[1].uv = (Vec2f){0.0, 1.0};
+        ctx->rectVertices[1].position = (Vec2f){-x, -y};
+        ctx->rectVertices[2].uv = (Vec2f){1.0, 1.0};
+        ctx->rectVertices[2].position = (Vec2f){x, -y};
+
+        /* second triangle:
+            \--|
+             \ |
+              \|
+        */
+        ctx->rectVertices[3].uv = (Vec2f){0.0, 0.0};
+        ctx->rectVertices[3].position = (Vec2f){-x, y};
+        ctx->rectVertices[4].uv = (Vec2f){1.0, 0.0};
+        ctx->rectVertices[4].position = (Vec2f){x, y};
+        ctx->rectVertices[5].uv = (Vec2f){1.0, 1.0};
+        ctx->rectVertices[5].position = (Vec2f){x, -y};
+        
+        ctx->rotating = true;
     }
 
     SDL_SetEventFilter(FilterSDL3Events, ctx);
@@ -784,6 +892,11 @@ DLL_EXPORT void DeInitAll(void *rawdata)
 
     TTF_Quit();
 
+    SDL_ReleaseGPUTexture(ctx->gpu, ctx->depthTexture);
+    SDL_ReleaseGPUTexture(ctx->gpu, ctx->catTexture);
+    SDL_ReleaseGPUSampler(ctx->gpu, ctx->sampler);
+    SDL_ReleaseGPUBuffer(ctx->gpu, ctx->vertexBuffer);
+
     SDL_DestroyGPUDevice(ctx->gpu);
     SDL_DestroyWindow(ctx->window);
     SDL_Quit();
@@ -815,6 +928,9 @@ void RenderAll(ProgramContext *ctx)
         };
         
         SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(cmdBuf, &colorTarget, 1, NULL);
+        SDL_BindGPUVertexBuffers(renderPass, 0, &(SDL_GPUBufferBinding){ .buffer = ctx->vertexBuffer }, 1);
+        SDL_BindGPUFragmentSamplers(renderPass, 0, &(SDL_GPUTextureSamplerBinding){.texture = ctx->catTexture, .sampler = ctx->sampler}, 1);
+
         if(ctx->wireframeMode) {
             SDL_LockMutex(ctx->linePipelineCompileCtx.mutex);
             SDL_BindGPUGraphicsPipeline(renderPass, ctx->linePipeline);
@@ -822,10 +938,7 @@ void RenderAll(ProgramContext *ctx)
             SDL_LockMutex(ctx->fillPipelineCompileCtx.mutex);
             SDL_BindGPUGraphicsPipeline(renderPass, ctx->fillPipeline);
         }
-        SDL_BindGPUVertexBuffers(renderPass, 0, &(SDL_GPUBufferBinding){
-                .buffer = ctx->vertexBuffer,
-            }, 1);
-        SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
+        SDL_DrawGPUPrimitives(renderPass, SDL_arraysize(ctx->rectVertices), 1, 0, 0);
     
         SDL_EndGPURenderPass(renderPass);
         // NOTE: If this doesn't work, move it to after SDL_SubmitGPUCommandBuffer
@@ -897,16 +1010,15 @@ DLL_EXPORT bool MainLoop(void *rawdata)
             } break;
 
             case SDL_EVENT_KEY_DOWN: {
-                if(event.key.key < 0xFF) {
+                if(event.key.key < 0xFFF) {
                     if(ctx->input.regularKeysUp[event.key.key]) ctx->input.regularKeysPressed[event.key.key] = true;
                     ctx->input.regularKeysDown[event.key.key] = true;
                     ctx->input.regularKeysUp[event.key.key] = false;
                 }
-                //SDL_Log("key down: %u", event.key.key);
             } break;
 
             case SDL_EVENT_KEY_UP: {
-                if(event.key.key < 0xFF) {
+                if(event.key.key < 0xFFF) {
                     if(ctx->input.regularKeysDown[event.key.key]) ctx->input.regularKeysReleased[event.key.key] = true;
                     ctx->input.regularKeysUp[event.key.key] = true;
                     ctx->input.regularKeysDown[event.key.key] = false;
@@ -925,6 +1037,10 @@ DLL_EXPORT bool MainLoop(void *rawdata)
 
     if(ctx->input.regularKeysPressed[SDLK_W]) {
         ctx->wireframeMode = !ctx->wireframeMode;
+    }
+
+    if(ctx->input.regularKeysPressed[SDLK_SPACE]) {
+        ctx->rotating = !ctx->rotating;
     }
 
     PipelineFromShaders(&ctx->fillPipelineCompileCtx, false);

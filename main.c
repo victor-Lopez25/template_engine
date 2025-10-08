@@ -206,7 +206,7 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
             for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
                 nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
                 if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "norun");
+                nob_cmd_append(cmd, "nob", "test");
                 if(!nob_cmd_run(cmd)) return false;
             }
         } break;
@@ -216,9 +216,9 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
             for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
                 nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
                 if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "norun", "hotreload");
+                nob_cmd_append(cmd, "nob", "test", "hotreload");
                 if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "norun", "nohotreload");
+                nob_cmd_append(cmd, "nob", "test", "nohotreload");
                 if(!nob_cmd_run(cmd)) return false;
             }
         } break;

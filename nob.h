@@ -596,6 +596,18 @@ NOBDEF bool nob_set_current_dir(const char *path);
 #  endif
 #endif // nob_cc
 
+#ifndef nob_cc_warnings_as_errors
+#  if _WIN32
+#    if defined(__GNUC__) || defined(__clang__)
+#      define nob_cc_warnings_as_errors(cmd) nob_cmd_append(cmd, "-Werror")
+#    elif defined(_MSC_VER)
+#      define nob_cc_warnings_as_errors(cmd) nob_cmd_append(cmd, "-WX")
+#    endif
+#  else
+#    define nob_cc_warnings_as_errors(cmd) nob_cmd_append(cmd, "-Werror")
+#  endif
+#endif
+
 #ifndef nob_cc_flags
 #  if defined(_MSC_VER) && !defined(__clang__)
 #    define nob_cc_flags(cmd) nob_cmd_append(cmd, "/W4", "/nologo", "/D_CRT_SECURE_NO_WARNINGS")

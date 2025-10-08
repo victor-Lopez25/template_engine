@@ -51,11 +51,15 @@ int main(int argc, char **argv)
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     bool shouldrun = true;
+    bool warningsAsErrors = false;
 
     while(argc > 1) {
         char *arg = argv[--argc];
         if(!strcmp(arg, "norun")) {
             shouldrun = false;
+        } else if(!strcmp(arg, "test")) {
+            shouldrun = false;
+            warningsAsErrors = true;
         }
     }
 
@@ -63,6 +67,7 @@ int main(int argc, char **argv)
     nob_copy_directory_recursively("dependencies", "bin");
     nob_cc(&cmd);
     nob_cmd_append(&cmd, "../src/main.c", COMMON_FLAGS, "-I", "../include");
+    if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
     nob_cc_output(&cmd, "template");
 #if defined(_MSC_VER)
     nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref", "/subsystem:console");

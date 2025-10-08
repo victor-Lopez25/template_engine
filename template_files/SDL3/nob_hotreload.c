@@ -114,10 +114,11 @@ bool ProgramAlreadyRunning(const char *program)
 }
 #endif
 
-bool CompileApp(Nob_Cmd *cmd)
+bool CompileApp(Nob_Cmd *cmd, bool warningsAsErrors)
 {
     nob_cc(cmd);
     nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include");
+    if(warningsAsErrors) nob_cc_warnings_as_errors(cmd);
 #if defined(_MSC_VER)
     nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s", "app" DLL_EXT), "-D_CRT_SECURE_NO_WARNINGS", "/link", "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
 #else
@@ -149,6 +150,7 @@ int main(int argc, char **argv)
 
     bool hotreload = true;
     bool shouldrun = true;
+    bool warningsAsErrors = false;
 
     while(argc > 1) {
         char *arg = argv[--argc];
@@ -158,6 +160,9 @@ int main(int argc, char **argv)
             hotreload = false;
         } else if(!strcmp(arg, "norun")) {
             shouldrun = false;
+        } else if(!strcmp(arg, "test")) {
+            shouldrun = false;
+            warningsAsErrors = true;
         }
     }
 
@@ -165,7 +170,7 @@ int main(int argc, char **argv)
     nob_set_current_dir("bin");
     Nob_Cmd cmd = {0};
 
-    if(!CompileApp(&cmd)) return 1;
+    if(!CompileApp(&cmd, warningsAsErrors)) return 1;
 
     if(hotreload) {
         nob_mkdir_if_not_exists("hotreload");
@@ -173,6 +178,7 @@ int main(int argc, char **argv)
             nob_cc(&cmd);
             nob_cc_output(&cmd, app_name);
             nob_cmd_append(&cmd, "../src/main_hot_reload.c", COMMON_FLAGS);
+            if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
 #if defined(_MSC_VER)
             nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
 #endif
@@ -182,6 +188,7 @@ int main(int argc, char **argv)
         nob_cc(&cmd);
         nob_cc_output(&cmd, app_name);
         nob_cmd_append(&cmd, "../src/main_no_hot_reload.c", COMMON_FLAGS, "-I", "../include");
+        if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
 #if defined(_MSC_VER)
         nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
 #endif

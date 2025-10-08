@@ -62,11 +62,11 @@ typedef struct {
 } InputButton;
 
 typedef struct {
-  bool regularKeysDown[0xFF];
-  bool regularKeysUp[0xFF];
-  bool regularKeysPressed[0xFF];
-  bool regularKeysReleased[0xFF];
-  // any other keys with SDLK_xyz > 0xFF
+  bool regularKeysDown[0xFFF];
+  bool regularKeysUp[0xFFF];
+  bool regularKeysPressed[0xFFF];
+  bool regularKeysReleased[0xFFF];
+  // any other keys with SDLK_xyz > 0xFFF
 
   InputButton mouseLeft;
   InputButton mouseMiddle;
@@ -381,7 +381,7 @@ int main(int argc, char **argv)
                 } break;
 
                 case SDL_EVENT_KEY_DOWN: {
-                    if(event.key.key < 0xFF) {
+                    if(event.key.key < 0xFFF) {
                         if(ctx.input.regularKeysUp[event.key.key]) ctx.input.regularKeysPressed[event.key.key] = true;
                         ctx.input.regularKeysDown[event.key.key] = true;
                         ctx.input.regularKeysUp[event.key.key] = false;
@@ -389,7 +389,7 @@ int main(int argc, char **argv)
                 } break;
 
                 case SDL_EVENT_KEY_UP: {
-                    if(event.key.key < 0xFF) {
+                    if(event.key.key < 0xFFF) {
                         if(ctx.input.regularKeysDown[event.key.key]) ctx.input.regularKeysReleased[event.key.key] = true;
                         ctx.input.regularKeysUp[event.key.key] = true;
                         ctx.input.regularKeysDown[event.key.key] = false;
