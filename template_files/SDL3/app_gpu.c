@@ -603,6 +603,11 @@ void UploadVertices(ProgramContext *ctx, SDL_GPUCommandBuffer *cmdBuf)
     SDL_EndGPUCopyPass(copyPass);
 }
 
+DLL_EXPORT void InitPartial(void *rawdata)
+{
+    (void) rawdata;
+}
+
 DLL_EXPORT bool InitAll(void *rawdata)
 {
     ProgramContext *ctx = (ProgramContext*)rawdata;
@@ -734,14 +739,11 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     bool ok = InitWorkQueue(&ctx->spall_ctx, &ctx->workQueue, 2);
 
+    InitPartial(rawdata);
+
     Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
 
     return ok;
-}
-
-DLL_EXPORT void InitPartial(void *rawdata)
-{
-    (void) rawdata;
 }
 
 void FreePipelineCompileContext(PipelineCompileContext *ctx)
@@ -753,8 +755,15 @@ void FreePipelineCompileContext(PipelineCompileContext *ctx)
     SDL_DestroyMutex(ctx->mutex);
 }
 
+DLL_EXPORT void DeInitPartial(void *rawdata)
+{
+    (void)rawdata;
+}
+
 DLL_EXPORT void DeInitAll(void *rawdata)
 {
+    DeInitPartial(rawdata);
+
     ProgramContext *ctx = (ProgramContext*)rawdata;
 
     spall_buffer_quit(&ctx->spall_ctx, &ctx->spall_buffer);
@@ -778,11 +787,6 @@ DLL_EXPORT void DeInitAll(void *rawdata)
     SDL_DestroyGPUDevice(ctx->gpu);
     SDL_DestroyWindow(ctx->window);
     SDL_Quit();
-}
-
-DLL_EXPORT void DeInitPartial(void *rawdata)
-{
-    (void)rawdata;
 }
 
 void RenderAll(ProgramContext *ctx)

@@ -19,6 +19,7 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+
 #if defined(_WIN32)
 # if defined(SHORTCUT_PATH)
 #  define SHORTCUT_PATH_ARG , "-DSHORTCUT_PATH=\"" SHORTCUT_PATH "\""
@@ -187,27 +188,39 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
 {
     NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
 
+#define X(...) { \
+    .items = (const char*[]){__VA_ARGS__}, \
+    .count = (sizeof((const char*[]){__VA_ARGS__})/sizeof(const char*)) }
+        struct { char **items; size_t count; } cmdItems[] = {
+#if defined(_WIN32)
+            X("gcc", "nob.c", "-o", "nob.exe", "-Wall", "-Wextra", "-Werror"),
+            X("clang", "nob.c", "-o", "nob.exe", "-Wall", "-Wextra", "-Werror"),
+            X("cl", "nob.c", "/nologo", "-FC", "-GR-", "-EHa", "-W4", "-WX"),
+#else
+            X("cc", "nob.c", "-o", "nob", "-Wall", "-Wextra", "-Werror"),
+#endif
+        };
+#undef X
     switch(chosen) {
         case Template_SDL3: {
-            nob_cc(cmd);
-            nob_cc_output(cmd, "nob");
-            nob_cmd_append(cmd, "nob.c", COMMON_FLAGS_NODEBUG);
-            if(!nob_cmd_run(cmd)) return false;
-            nob_cmd_append(cmd, "nob", "norun");
-            if(!nob_cmd_run(cmd)) return false;
+            for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
+                nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
+                if(!nob_cmd_run(cmd)) return false;
+                nob_cmd_append(cmd, "nob", "norun");
+                if(!nob_cmd_run(cmd)) return false;
+            }
         } break;
 
         case Template_SDL3_Hotreload:
         case Template_SDL3_GPU_Hotreload: {
-            nob_cc(cmd);
-            nob_cc_output(cmd, "nob");
-            nob_cmd_append(cmd, "nob.c", COMMON_FLAGS_NODEBUG);
-            if(!nob_cmd_run(cmd)) return false;
-            nob_cmd_append(cmd, "nob", "norun", "hotreload");
-            if(!nob_cmd_run(cmd)) return false;
-
-            nob_cmd_append(cmd, "nob", "norun", "nohotreload");
-            if(!nob_cmd_run(cmd)) return false;
+            for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
+                nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
+                if(!nob_cmd_run(cmd)) return false;
+                nob_cmd_append(cmd, "nob", "norun", "hotreload");
+                if(!nob_cmd_run(cmd)) return false;
+                nob_cmd_append(cmd, "nob", "norun", "nohotreload");
+                if(!nob_cmd_run(cmd)) return false;
+            }
         } break;
 
         case Template_None: case Count_Templates: return false;

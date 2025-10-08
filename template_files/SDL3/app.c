@@ -140,7 +140,7 @@ void AddWorkEntry(WorkQueue *queue, ThreadWorkCallback callback, void *data)
     WorkQueueEntry *entry = &queue->entries[queue->nextEntryToWrite];
     entry->callback = callback;
     entry->data = data;
-    SDL_AddAtomicU32(&queue->completionGoal, 1);
+    SDL_AddAtomicInt(&queue->completionGoal, 1);
     SDL_CompilerBarrier();
     queue->nextEntryToWrite = nextEntryToWrite;
     SDL_SignalSemaphore(queue->semaphore);
@@ -156,7 +156,7 @@ bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQue
         if(SDL_CompareAndSwapAtomicInt(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
             WorkQueueEntry *entry = &queue->entries[originalNextEntryToRead];
             entry->callback(spall_ctx, spall_buffer, entry->data);
-            SDL_AddAtomicU32(&queue->completionCount, 1);
+            SDL_AddAtomicInt(&queue->completionCount, 1);
         }
     } else {
         shouldSleep = true;
@@ -242,6 +242,11 @@ bool InitWorkQueue(SpallProfile *spall_ctx, WorkQueue *queue, Uint32 threadCount
 
 //////////////////////////////////////////////////////////
 
+DLL_EXPORT void InitPartial(void *rawdata)
+{
+    (void) rawdata;
+}
+
 DLL_EXPORT bool InitAll(void *rawdata)
 {
     ProgramContext *ctx = (ProgramContext*)rawdata;
@@ -293,16 +298,20 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
 
+    InitPartial(rawdata);
+
     return ok;
 }
 
-DLL_EXPORT void InitPartial(void *rawdata)
+DLL_EXPORT void DeInitPartial(void *rawdata)
 {
-    (void) rawdata;
+    (void)rawdata;
 }
 
 DLL_EXPORT void DeInitAll(void *rawdata)
 {
+    DeInitPartial(rawdata);
+
     ProgramContext *ctx = (ProgramContext*)rawdata;
 
     spall_buffer_quit(&ctx->spall_ctx, &ctx->spall_buffer);
@@ -320,11 +329,6 @@ DLL_EXPORT void DeInitAll(void *rawdata)
     SDL_DestroyRenderer(ctx->renderer);
     SDL_DestroyWindow(ctx->window);
     SDL_Quit();
-}
-
-DLL_EXPORT void DeInitPartial(void *rawdata)
-{
-    (void)rawdata;
 }
 
 void RenderAll(ProgramContext *ctx)
