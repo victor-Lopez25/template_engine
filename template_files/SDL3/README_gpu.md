@@ -30,3 +30,5 @@ You will have to probably compile SDL3_shadercross from source since it's not in
 
 
 WARNING: If trying hot reloading of shaders specifically on vscode with auto saving, keep in mind vscode sometimes doesn't save for small changes so actually save too (thought this was an issue in my program lol)
+
+WARNING: glsl compilation to spv (SPIR-V) doesn't happen at runtime within app.c
