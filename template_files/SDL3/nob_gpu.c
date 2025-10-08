@@ -189,7 +189,7 @@ void CompileGlslShadersInDirectory(Nob_Cmd *cmd, const char *directory)
 
 int main(int argc, char **argv)
 {
-    //NOB_GO_REBUILD_URSELF(argc, argv);
+    NOB_GO_REBUILD_URSELF(argc, argv);
 
     const char *app_name = "template";
 
