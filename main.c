@@ -179,7 +179,8 @@ void DoTemplate(Template chosen)
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_gpu.c", selfPath), "nob.c");
             nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README_gpu.md", selfPath), "README.md");
 
-            nob_copy_file(nob_temp_sprintf("%s/template_files/resources/cat.jpg", selfPath), "cat.jpg");
+            nob_mkdir_if_not_exists("resources");
+            nob_copy_file(nob_temp_sprintf("%s/template_files/resources/cat.jpg", selfPath), "resources/cat.jpg");
         } break;
 
         case Template_None: case Count_Templates: break;
@@ -331,8 +332,9 @@ int main(int argc, char **argv)
         NOB_GO_REBUILD_URSELF(argc, argv);
 #if defined(_WIN32) && defined(SHORTCUT_PATH)
         size_t exe_name_len = strlen(argv[0]);
-        if(exe_name_len < 5 || strcmp(argv[0] + exe_name_len - 4, ".exe")) nob_log(NOB_ERROR, "Need executable to have '.exe' extension for this.");
-        else {
+        if(exe_name_len < 5 || strcmp(argv[0] + exe_name_len - 4, ".exe")) {
+            nob_log(NOB_ERROR, "Need executable to have '.exe' extension to make a shortcut");
+        } else {
             system(nob_temp_sprintf("make_shortcut.bat %.*s "SHORTCUT_PATH, exe_name_len - 4, argv[0]));
             nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
         }

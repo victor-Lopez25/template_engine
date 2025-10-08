@@ -156,19 +156,22 @@ char *GetShaderstageFromExt(Nob_String_View file) {
 bool CompileGlslShader(Nob_Cmd *cmd, Nob_String_View shaderfile)
 {
     // NOTE: To compile glsl shaders, glslc is required
-    bool ok = true;
     Nob_String_View noGlslExt = nob_sv_from_parts(shaderfile.data, shaderfile.count - strlen(".glsl"));
     char *output = nob_temp_sprintf(SV_Fmt".spv", SV_Arg(noGlslExt));
     if(nob_needs_rebuild1(output, shaderfile.data) == 1) {
         char *shaderStage = GetShaderstageFromExt(noGlslExt);
+        if(!shaderStage) {
+            nob_log(NOB_ERROR, "Invalid extension in shader file referencing shader stage '%s'", shaderfile);
+            return false;
+        }
         nob_cmd_append(cmd, "glslc", "-o", output, 
             nob_temp_sprintf("-fshader-stage=%s", shaderStage), shaderfile.data);
         if(!nob_cmd_run(cmd)) {
             nob_log(NOB_ERROR, "Could not compile "SV_Fmt" to %s", SV_Arg(noGlslExt), output);
-            ok = false;
+            return false;
         }
     }
-    return ok;
+    return true;
 }
 
 void CompileGlslShadersInDirectory(Nob_Cmd *cmd, const char *directory)
@@ -214,6 +217,7 @@ int main(int argc, char **argv)
 
     nob_copy_directory_recursively("dependencies", "bin");
     nob_set_current_dir("bin");
+    nob_copy_directory_recursively("../resources", "resources");
     Nob_Cmd cmd = {0};
 
     if(!CompileApp(&cmd, warningsAsErrors)) return 1;
