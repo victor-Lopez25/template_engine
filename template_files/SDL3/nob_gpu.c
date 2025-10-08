@@ -161,7 +161,7 @@ bool CompileGlslShader(Nob_Cmd *cmd, Nob_String_View shaderfile)
     if(nob_needs_rebuild1(output, shaderfile.data) == 1) {
         char *shaderStage = GetShaderstageFromExt(noGlslExt);
         if(!shaderStage) {
-            nob_log(NOB_ERROR, "Invalid extension in shader file referencing shader stage '%s'", shaderfile);
+            nob_log(NOB_ERROR, "Invalid extension in shader file referencing shader stage '"SV_Fmt"'", SV_Arg(shaderfile));
             return false;
         }
         nob_cmd_append(cmd, "glslc", "-o", output, 
