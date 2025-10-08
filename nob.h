@@ -227,9 +227,18 @@ typedef enum {
     NOB_FILE_OTHER,
 } Nob_File_Type;
 
+typedef struct {
+    const char *src;
+    const char *dst;
+    const char *ext;
+} Nob_Copy_Dir_Opt;
+
 NOBDEF bool nob_mkdir_if_not_exists(const char *path);
 NOBDEF bool nob_copy_file(const char *src_path, const char *dst_path);
-NOBDEF bool nob_copy_directory_recursively(const char *src_path, const char *dst_path);
+#define nob_copy_directory_recursively(src_path, ...) \
+    nob_copy_directory_recursively_opt((Nob_Copy_Dir_Opt){.src = (src_path), __VA_ARGS__})
+NOBDEF bool nob_copy_directory_recursively_impl(const char *src_path, const char *dst_path, const char *ext);
+NOBDEF bool nob_copy_directory_recursively_opt(Nob_Copy_Dir_Opt opt);
 NOBDEF bool nob_read_entire_dir(const char *parent, Nob_File_Paths *children);
 NOBDEF bool nob_write_entire_file(const char *path, const void *data, size_t size);
 NOBDEF Nob_File_Type nob_get_file_type(const char *path);
@@ -1657,7 +1666,7 @@ NOBDEF bool nob_delete_file(const char *path)
 #endif // _WIN32
 }
 
-NOBDEF bool nob_copy_directory_recursively(const char *src_path, const char *dst_path)
+NOBDEF bool nob_copy_directory_recursively_impl(const char *src_path, const char *dst_path, const char *ext)
 {
     bool result = true;
     Nob_File_Paths children = {0};
@@ -1696,7 +1705,7 @@ NOBDEF bool nob_copy_directory_recursively(const char *src_path, const char *dst
         } break;
 
         case NOB_FILE_REGULAR: {
-            if (!nob_copy_file(src_path, dst_path)) {
+            if (nob_sv_end_with(nob_sv_from_cstr(src_path), ext) && !nob_copy_file(src_path, dst_path)) {
                 nob_return_defer(false);
             }
         } break;
@@ -1719,6 +1728,23 @@ defer:
     nob_da_free(dst_sb);
     nob_da_free(children);
     return result;
+}
+
+NOBDEF bool nob_copy_directory_recursively_opt(Nob_Copy_Dir_Opt opt)
+{
+    if(opt.src == 0) {
+        nob_log(NOB_ERROR, "Invalid parameter: src directory is null");
+        return false;
+    }
+    if(opt.dst == 0) opt.dst = ".";
+    if(opt.ext == 0) opt.ext = "";
+
+    nob_log(NOB_INFO, "copying %s/*%s -> %s", opt.src, opt.ext, opt.dst);
+    Nob_Log_Level prevLogLevel = nob_minimal_log_level;
+    nob_minimal_log_level = NOB_WARNING;
+    bool ok = nob_copy_directory_recursively_impl(opt.src, opt.dst, opt.ext);
+    nob_minimal_log_level = prevLogLevel;
+    return ok;
 }
 
 NOBDEF char *nob_temp_strdup(const char *cstr)
