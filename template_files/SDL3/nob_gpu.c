@@ -55,27 +55,6 @@ void cmd_cc_libpath(Nob_Cmd *cmd, const char *path)
 #endif
 }
 
-/* 1 - directory
-   0 - other
-  -1 - file      */
-int IsDirectory(const char *file)
-{
-#if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(file);
-    if(attr == INVALID_FILE_ATTRIBUTES || attr & FILE_ATTRIBUTE_SYSTEM) return 0;
-    if(attr & FILE_ATTRIBUTE_DIRECTORY) return 1;
-    return -1;
-#else
-    struct stat s;
-    if(!stat(file, &s)) {
-        if(s.st_mode & S_IFDIR) return 1;
-        if(s.st_mode & S_IFREG) return -1;
-        return 0;
-    }
-    return 0;
-#endif
-}
-
 #if defined(_WIN32)
 bool ProgramAlreadyRunning(const char *program)
 {
@@ -162,19 +141,46 @@ bool CompileApp(Nob_Cmd *cmd)
     return true;
 }
 
-void CompileGlslShader(const char *shaderfile)
-{
-    nob_log(NOB_ERROR, "TODO");
+// NOTE: For glslc
+char *GetShaderstageFromExt(Nob_String_View file) {
+    if(nob_sv_end_with(file, ".vert")) {
+        return "vert"; // 'vertex' is also valid
+    } if(nob_sv_end_with(file, ".frag")) {
+        return "frag"; // 'fragment' is also valid
+    } if(nob_sv_end_with(file, ".comp")) {
+        return "comp"; // 'compute' is also valid
+    } else return 0; // SDL_gpu doesn't support others If I understand correctly
 }
 
-void CompileGlslShadersInDirectory(const char *directory)
+bool CompileGlslShader(Nob_Cmd *cmd, Nob_String_View shaderfile)
+{
+    // NOTE: To compile glsl shaders, glslc is required
+    bool ok = true;
+    Nob_String_View noGlslExt = nob_sv_from_parts(shaderfile.data, shaderfile.count - strlen(".glsl"));
+    char *output = nob_temp_sprintf(SV_Fmt".spv", SV_Arg(noGlslExt));
+    if(nob_needs_rebuild1(output, shaderfile.data) == 1) {
+        char *shaderStage = GetShaderstageFromExt(noGlslExt);
+        nob_cmd_append(cmd, "glslc", "-o", output, 
+            nob_temp_sprintf("-fshader-stage=%s", shaderStage), shaderfile.data);
+        if(!nob_cmd_run(cmd)) {
+            nob_log(NOB_ERROR, "Could not compile "SV_Fmt" to %s", SV_Arg(noGlslExt), output);
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+void CompileGlslShadersInDirectory(Nob_Cmd *cmd, const char *directory)
 {
     Nob_File_Paths files = {0};
     if(nob_read_entire_dir(directory, &files)) {
         for(size_t fileIdx = 0; fileIdx < files.count; fileIdx++) {
-            const char *file = files.items[fileIdx];
-            if(IsDirectory(file) == -1 && strstr(file, "glsl")) {
-                CompileGlslShader(file);
+            const char *file = nob_temp_sprintf("%s/%s", directory, files.items[fileIdx]);
+            Nob_String_View fileView = nob_sv_from_cstr(file);
+            if(nob_get_file_type(file) == NOB_FILE_REGULAR && 
+               nob_sv_end_with(fileView, ".glsl"))
+            {
+                CompileGlslShader(cmd, fileView);
             }
         }
     }
@@ -183,7 +189,7 @@ void CompileGlslShadersInDirectory(const char *directory)
 
 int main(int argc, char **argv)
 {
-    NOB_GO_REBUILD_URSELF(argc, argv);
+    //NOB_GO_REBUILD_URSELF(argc, argv);
 
     const char *app_name = "template";
 
@@ -207,6 +213,9 @@ int main(int argc, char **argv)
 
     if(!CompileApp(&cmd)) return 1;
 
+    CompileGlslShadersInDirectory(&cmd, "../shaders");
+    nob_copy_directory_recursively("../shaders", "shaders");
+
     if(hotreload) {
         nob_mkdir_if_not_exists("hotreload");
         if(!ProgramAlreadyRunning(app_name)) {
@@ -219,7 +228,6 @@ int main(int argc, char **argv)
             if(!nob_cmd_run(&cmd)) return 1;
         }
     } else {
-        nob_copy_directory_recursively("../shaders", "shaders");
 
         nob_cc(&cmd);
         nob_cc_output(&cmd, app_name);

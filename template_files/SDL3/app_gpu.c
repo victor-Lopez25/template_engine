@@ -679,7 +679,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
     ctx->fillPipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
 
     InitPipelineCompileContext(ctx, &ctx->fillPipelineCompileCtx, 
-        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->fillPipeline, VertexInstance);
+        "shader.vert.spv", "shader.frag.spv", &ctx->fillPipeline, VertexInstance);
     PipelineFromShaders(&ctx->fillPipelineCompileCtx, true);
     if(!ctx->fillPipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create fill pipeline");
@@ -688,7 +688,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     ctx->linePipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
     InitPipelineCompileContext(ctx, &ctx->linePipelineCompileCtx, 
-        "shader.vert.hlsl", "shader.frag.hlsl", &ctx->linePipeline, VertexInstance);
+        "shader.vert.spv", "shader.frag.spv", &ctx->linePipeline, VertexInstance);
     PipelineFromShaders(&ctx->linePipelineCompileCtx, true);
     if(!ctx->linePipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create line pipeline");
