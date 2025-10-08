@@ -214,7 +214,8 @@ int main(int argc, char **argv)
     if(!CompileApp(&cmd)) return 1;
 
     CompileGlslShadersInDirectory(&cmd, "../shaders");
-    nob_copy_directory_recursively("../shaders", "shaders");
+    nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".hlsl");
+    nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".spv");
 
     if(hotreload) {
         nob_mkdir_if_not_exists("hotreload");
