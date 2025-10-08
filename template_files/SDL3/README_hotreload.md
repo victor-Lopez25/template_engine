@@ -21,8 +21,6 @@ Then run `nob(.exe)` in the same folder and it'll recompile itself if any change
 
 If for any reason you want to not hot reload, you can run `nob(.exe) nohotreload` and it'll #include app.c instead of linking dynamically to it. Why? You might want this for release builds.
 
-Only hlsl shaders supported for now. Will soon try to support vulkan (glsl) shaders, probably won't support metal shaders but it should still work on macos with other shaders.
-
 ## Dependencies
 
 On windows, vendored.
