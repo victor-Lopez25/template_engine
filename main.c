@@ -236,29 +236,10 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
     return true;
 }
 
-int IsDirectory(const char *file)
-{
-#if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(file);
-    if(attr == INVALID_FILE_ATTRIBUTES || attr & FILE_ATTRIBUTE_SYSTEM) return 0;
-    if(attr & FILE_ATTRIBUTE_DIRECTORY) return 1;
-    return -1;
-#else
-    struct stat s;
-    if(!stat(file, &s)) {
-        if(s.st_mode & S_IFDIR) return 1;
-        if(s.st_mode & S_IFREG) return -1;
-        return 0;
-    }
-    return 0;
-#endif
-}
-
-// TODO: Do this iterative maybe?
 bool RemoveDirectoryRecursive(const char *dir)
 {
-    int attr = IsDirectory(dir);
-    if(attr == 1) { // directory
+    Nob_File_Type type = nob_get_file_type(dir);
+    if(type == NOB_FILE_DIRECTORY) { // directory
         Nob_File_Paths paths = {0};
         size_t mark = nob_temp_save();
         nob_read_entire_dir(dir, &paths);
@@ -279,8 +260,18 @@ bool RemoveDirectoryRecursive(const char *dir)
 #else
         return rmdir(dir) == 0;
 #endif
-    } else if(attr == -1) { // normal file
+    } else if(type == NOB_FILE_REGULAR) { // normal file
         return nob_delete_file(dir);
+    } else if(type == NOB_FILE_SYMLINK) {
+#if defined(_WIN32)
+        nob_log(NOB_WARNING, "Symlink deleting is not supported on windows for now, skipped deleting '%s'", dir);
+        return true;
+#else
+        return unlink(dir) == 0;
+#endif
+    } else if(type == NOB_FILE_OTHER) {
+        nob_log(NOB_WARNING, "Unknown file type of file '%s'", dir);
+        return true;
     }
     return false;
 }
@@ -322,7 +313,6 @@ void Test(void)
     RemoveDirectoryRecursive("temp");
     for(int templateIdx = Template_None+1; templateIdx < Count_Templates; templateIdx++)
     {
-        //nob_minimal_log_level = NOB_ERROR;
         nob_mkdir_if_not_exists("temp");
         nob_set_current_dir("temp");
 
