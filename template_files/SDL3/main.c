@@ -62,10 +62,10 @@ typedef struct {
 } InputButton;
 
 typedef struct {
-  bool regularKeysDown[0xFFF];
-  bool regularKeysUp[0xFFF];
-  bool regularKeysPressed[0xFFF];
-  bool regularKeysReleased[0xFFF];
+  bool keyDown[0xFFF];
+  bool keyUp[0xFFF];
+  bool keyPressed[0xFFF];
+  bool keyReleased[0xFFF];
   // any other keys with SDLK_xyz > 0xFFF
 
   InputButton mouseLeft;
@@ -338,7 +338,7 @@ void GetMouseInput(ProgramContext *ctx)
 void ClearInput(ProgramContext *ctx)
 {
     // Clear pressed and released keys
-    SDL_memset4(ctx->input.regularKeysPressed, 0, sizeof(ctx->input.regularKeysPressed)/2);
+    SDL_memset4(ctx->input.keyPressed, 0, sizeof(ctx->input.keyPressed)/2);
 #define ClearMouseButton(button) \
     button.pressed = false; button.released = false;
     ClearMouseButton(ctx->input.mouseLeft)
@@ -360,7 +360,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    SDL_memset4(ctx.input.regularKeysUp, 0x01010101, sizeof(ctx.input.regularKeysUp)/4);
+    SDL_memset4(ctx.input.keyUp, 0x01010101, sizeof(ctx.input.keyUp)/4);
     ctx.input.mouseLeft.up = true; ctx.input.mouseMiddle.up = true; ctx.input.mouseRight.up = true;
     ctx.input.mouseX1.up = true; ctx.input.mouseX2.up = true;
 
@@ -382,17 +382,17 @@ int main(int argc, char **argv)
 
                 case SDL_EVENT_KEY_DOWN: {
                     if(event.key.key < 0xFFF) {
-                        if(ctx.input.regularKeysUp[event.key.key]) ctx.input.regularKeysPressed[event.key.key] = true;
-                        ctx.input.regularKeysDown[event.key.key] = true;
-                        ctx.input.regularKeysUp[event.key.key] = false;
+                        if(ctx.input.keyUp[event.key.key]) ctx.input.keyPressed[event.key.key] = true;
+                        ctx.input.keyDown[event.key.key] = true;
+                        ctx.input.keyUp[event.key.key] = false;
                     }
                 } break;
 
                 case SDL_EVENT_KEY_UP: {
                     if(event.key.key < 0xFFF) {
-                        if(ctx.input.regularKeysDown[event.key.key]) ctx.input.regularKeysReleased[event.key.key] = true;
-                        ctx.input.regularKeysUp[event.key.key] = true;
-                        ctx.input.regularKeysDown[event.key.key] = false;
+                        if(ctx.input.keyDown[event.key.key]) ctx.input.keyReleased[event.key.key] = true;
+                        ctx.input.keyUp[event.key.key] = true;
+                        ctx.input.keyDown[event.key.key] = false;
                     }
                 } break;
 

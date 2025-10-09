@@ -49,6 +49,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
+#if defined(_WIN32)
+#include <ConsoleApi.h>
+#endif
+
 #ifndef OUT_DIRECTORY
 # define OUT_DIRECTORY "bin"
 #endif
@@ -281,10 +285,39 @@ bool RemoveDirectoryRecursive(const char *dir)
     return false;
 }
 
+bool ConsoleSupportsColor(void)
+{
+    static bool supports = false;
+    static bool tested = false;
+    if(tested) return supports;
+
+#if defined(_WIN32)
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode;
+    if(GetConsoleMode(out, &mode)) {
+        supports = mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    }
+#else
+    supports = system("tput colors > /dev/null 2>&1") == 0;
+#endif
+    tested = true;
+    return supports;
+}
+
+const char *SuccessOrFail(bool success)
+{
+    if(ConsoleSupportsColor()) {
+        return success ? ("\033[0;32m" "success" "\033[0m") : 
+                         ("\033[0;31m" "fail"    "\033[0m");
+    }
+    return success ? "success" : "fail";
+}
+
 void Test(void)
 {
     Nob_Cmd cmd = {0};
     bool returnOnFirstFail = true;
+    bool success = true;
     nob_minimal_log_level = NOB_ERROR;
     RemoveDirectoryRecursive("temp");
     for(int templateIdx = Template_None+1; templateIdx < Count_Templates; templateIdx++)
@@ -299,11 +332,15 @@ void Test(void)
         bool ok = TestTemplate(&cmd, (Template)templateIdx);
         nob_minimal_log_level = NOB_ERROR;
 
-        printf("Test: %s - %s\n", TemplateToString((Template)templateIdx), ok ? "success" : "fail");
+        printf("Test: %s - %s\n", TemplateToString((Template)templateIdx), SuccessOrFail(ok));
         nob_set_current_dir("..");
-        if(returnOnFirstFail && !ok) return;
+        if(!ok) {
+            if(returnOnFirstFail) return;
+            else success = false;
+        }
         if(!RemoveDirectoryRecursive("temp")) return;
     }
+    printf("\nTests %s\n", SuccessOrFail(success));
 }
 
 int main(int argc, char **argv)
