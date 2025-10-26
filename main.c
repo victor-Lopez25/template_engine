@@ -57,37 +57,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 # define OUT_DIRECTORY "bin"
 #endif
 
-#if defined(_WIN32)
-char selfPath[MAX_PATH];
-#else
-char selfPath[PATH_MAX];
-#endif
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
-
-char *GetSelfPath() {
-#if defined(_WIN32)
-    DWORD len = GetModuleFileNameA(0, selfPath, MAX_PATH);
-    if(!len) {
-        return 0;
-    }
-#elif defined(__APPLE__)
-    uint32_t bufsize = PATH_MAX;
-    if(_NSGetExecutablePath(selfPath, &bufsize)) {
-        return 0;
-    }
-#else
-    ssize_t len = readlink("/proc/self/exe", selfPath, PATH_MAX);
-    if(len == -1) return 0;
-    selfPath[len] = 0;
-#endif
-    while(len > 0 && selfPath[len] != '/' && selfPath[len] != '\\') len--;
-    selfPath[len] = 0;
-
-    return selfPath;
-}
+char *selfPath;
 
 void Usage(char *program)
 {
@@ -335,8 +305,17 @@ void Test(void)
 
 int main(int argc, char **argv)
 {
-    bool inExeDirectory = !strcmp(GetSelfPath(), nob_get_current_dir_temp());
-    nob_temp_reset();
+    char *exe_path = nob_temp_running_executable_path();
+    selfPath = nob_temp_dir_name(exe_path);
+    for(size_t i = strlen(selfPath) - 1; i >= 0; i--) {
+        if(selfPath[i] == '/' || selfPath[i] == '\\') {
+            selfPath[i] = '\0';
+            break;
+        }
+    }
+    
+    const char *current_dir = nob_get_current_dir_temp();
+    bool inExeDirectory = !strcmp(selfPath, current_dir);
 
     for(int argIdx = 1; argIdx < argc; argIdx++) {
         char *arg = argv[argIdx];

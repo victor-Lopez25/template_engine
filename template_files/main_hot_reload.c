@@ -199,8 +199,8 @@ typedef struct {
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    char *path = nob_get_executable_dir_temp();
-    nob_set_current_dir(path);
+    char *exe_dir = nob_temp_dir_name(nob_temp_running_executable_path());
+    nob_set_current_dir(exe_dir);
 
     int version = 0;
     ProgramApi api = {0};

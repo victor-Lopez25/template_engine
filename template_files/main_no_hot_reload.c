@@ -7,7 +7,7 @@
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    nob_set_current_dir(nob_get_executable_dir_temp());
+    nob_set_current_dir(nob_temp_dir_name(nob_temp_running_executable_path()));
 
     void *appMemory = malloc(MemorySize());
     if(!appMemory) {
