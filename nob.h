@@ -619,9 +619,9 @@ NOBDEF bool nob_set_current_dir(const char *path);
 #ifndef nob_cc_output
 #  if defined(_WIN32)
 #    if defined(_MSC_VER) && !defined(__clang__)
-#      define nob_cc_output(cmd, output_path) nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s.exe", (output_path)))
+#      define nob_cc_output(cmd, output_path) nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s", (output_path)))
 #    else
-#      define nob_cc_output(cmd, output_path) nob_cmd_append(cmd, "-o", nob_temp_sprintf("%s.exe", (output_path)))
+#      define nob_cc_output(cmd, output_path) nob_cmd_append(cmd, "-o", (output_path))
 #    endif
 #  else
 #    define nob_cc_output(cmd, output_path) nob_cmd_append(cmd, "-o", (output_path))

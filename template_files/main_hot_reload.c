@@ -196,69 +196,9 @@ typedef struct {
     size_t capacity;
 } ProgramApis;
 
-#if defined(_WIN32)
-bool ProgramAlreadyRunning(const char *program)
-{
-    bool running = false;
-    HANDLE mut = CreateMutexA(0, FALSE, nob_temp_sprintf("Local\\%s", program));
-    if(GetLastError() == ERROR_ALREADY_EXISTS) {
-        running = true;
-    }
-    else if(mut) CloseHandle(mut);
-
-    return running;
-}
-#else
-bool ProgramAlreadyRunning(const char *program)
-{
-    bool running = false;
-    DIR* dir;
-    struct dirent* ent;
-    char* endptr;
-    char buf[512];
-
-    if (!(dir = opendir("/proc"))) {
-        perror("can't open /proc");
-        return -1;
-    }
-
-    while((ent = readdir(dir)) != NULL) {
-        /* if endptr is not a null character, the directory is not
-         * entirely numeric, so ignore it */
-        long lpid = strtol(ent->d_name, &endptr, 10);
-        if (*endptr != '\0') {
-            continue;
-        }
-
-        /* try to open the cmdline file */
-        size_t mark = nob_temp_save();
-        char *buf = nob_temp_sprintf("/proc/%ld/cmdline", lpid);
-        nob_temp_rewind(mark);
-        FILE* fp = fopen(buf, "r");
-
-        if (fp) {
-            if (fgets(buf, strlen(buf), fp) != NULL) {
-                /* check the first token in the file, the program name */
-                char *first = strtok(buf, " ");
-                if (!strcmp(first, name)) {
-                    fclose(fp);
-                    closedir(dir);
-                    running = true;
-                }
-            }
-            fclose(fp);
-        }
-    }
-
-    closedir(dir);
-    return running;
-}
-#endif
-
 int main(int argc, char **argv)
 {
-    (void) argc;
-    if(ProgramAlreadyRunning(argv[0])) return 0;
+    (void)argc; (void)argv;
     char *path = nob_get_executable_dir_temp();
     nob_set_current_dir(path);
 

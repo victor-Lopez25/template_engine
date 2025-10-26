@@ -59,12 +59,29 @@ void cmd_cc_libpath(Nob_Cmd *cmd, const char *path)
 bool ProgramAlreadyRunning(const char *program)
 {
     bool running = false;
-    HANDLE mut = CreateMutexA(0, FALSE, nob_temp_sprintf("Local\\%s", program));
-    if(GetLastError() == ERROR_ALREADY_EXISTS) {
-        running = true;
-    }
-    else if(mut) CloseHandle(mut);
 
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if(snapshot == INVALID_HANDLE_VALUE) {
+        nob_log(NOB_ERROR, "Could not enum processes: %s", nob_win32_error_message(GetLastError()));
+        return false;
+    }
+
+    PROCESSENTRY32 processInfo = {
+        .dwSize = sizeof(PROCESSENTRY32),
+    };
+    if(!Process32First(snapshot, &processInfo)) {
+        nob_log(NOB_ERROR, "Could not get process info: %s", nob_win32_error_message(GetLastError()));
+        CloseHandle(snapshot);
+        return false;
+    }
+    do {
+        if(!strcmp(&processInfo.szExeFile[0], program)) {
+            running = true;
+            break;
+        }
+    } while(Process32Next(snapshot, &processInfo));
+
+    CloseHandle(snapshot);
     return running;
 }
 #else
@@ -117,7 +134,7 @@ bool ProgramAlreadyRunning(const char *program)
 bool CompileApp(Nob_Cmd *cmd, bool warningsAsErrors)
 {
     nob_cc(cmd);
-    nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include");
+    nob_cmd_append(cmd, "../src/app.c", COMMON_FLAGS, "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
     if(warningsAsErrors) nob_cc_warnings_as_errors(cmd);
 #if defined(_MSC_VER)
     nob_cmd_append(cmd, nob_temp_sprintf("/Fe:%s", "app" DLL_EXT), "-D_CRT_SECURE_NO_WARNINGS", "/link", "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
@@ -127,7 +144,7 @@ bool CompileApp(Nob_Cmd *cmd, bool warningsAsErrors)
 #if defined(_WIN32)
     cmd_cc_libpath(cmd, "../lib");
 #endif
-    cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
+    cmd_cc_libs(cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 
 #if defined(_MSC_VER)
     char pdb_lock_str[] = "PDBSHIT";
@@ -140,6 +157,55 @@ bool CompileApp(Nob_Cmd *cmd, bool warningsAsErrors)
 #endif
 
     return true;
+}
+
+// NOTE: For glslc
+char *GetShaderstageFromExt(Nob_String_View file) {
+    if(nob_sv_end_with(file, ".vert")) {
+        return "vert"; // 'vertex' is also valid
+    } if(nob_sv_end_with(file, ".frag")) {
+        return "frag"; // 'fragment' is also valid
+    } if(nob_sv_end_with(file, ".comp")) {
+        return "comp"; // 'compute' is also valid
+    } else return 0; // SDL_gpu doesn't support others If I understand correctly
+}
+
+bool CompileGlslShader(Nob_Cmd *cmd, Nob_String_View shaderfile)
+{
+    // NOTE: To compile glsl shaders, glslc is required
+    Nob_String_View noGlslExt = nob_sv_from_parts(shaderfile.data, shaderfile.count - strlen(".glsl"));
+    char *output = nob_temp_sprintf(SV_Fmt".spv", SV_Arg(noGlslExt));
+    if(nob_needs_rebuild1(output, shaderfile.data) == 1) {
+        char *shaderStage = GetShaderstageFromExt(noGlslExt);
+        if(!shaderStage) {
+            nob_log(NOB_ERROR, "Invalid extension in shader file referencing shader stage '"SV_Fmt"'", SV_Arg(shaderfile));
+            return false;
+        }
+        nob_cmd_append(cmd, "glslc", "-o", output, 
+            nob_temp_sprintf("-fshader-stage=%s", shaderStage), shaderfile.data);
+        if(!nob_cmd_run(cmd)) {
+            nob_log(NOB_ERROR, "Could not compile "SV_Fmt" to %s", SV_Arg(noGlslExt), output);
+            return false;
+        }
+    }
+    return true;
+}
+
+void CompileGlslShadersInDirectory(Nob_Cmd *cmd, const char *directory)
+{
+    Nob_File_Paths files = {0};
+    if(nob_read_entire_dir(directory, &files)) {
+        for(size_t fileIdx = 0; fileIdx < files.count; fileIdx++) {
+            const char *file = nob_temp_sprintf("%s/%s", directory, files.items[fileIdx]);
+            Nob_String_View fileView = nob_sv_from_cstr(file);
+            if(nob_get_file_type(file) == NOB_FILE_REGULAR && 
+               nob_sv_end_with(fileView, ".glsl"))
+            {
+                CompileGlslShader(cmd, fileView);
+            }
+        }
+    }
+    NOB_FREE(files.items);
 }
 
 int main(int argc, char **argv)
@@ -168,42 +234,46 @@ int main(int argc, char **argv)
 
     nob_copy_directory_recursively("dependencies", "bin");
     nob_set_current_dir("bin");
+    nob_copy_directory_recursively("../resources", "resources");
     Nob_Cmd cmd = {0};
 
     if(!CompileApp(&cmd, warningsAsErrors)) return 1;
 
-    if(hotreload) {
-        nob_mkdir_if_not_exists("hotreload");
-        if(!ProgramAlreadyRunning(app_name)) {
-            nob_cc(&cmd);
-            nob_cc_output(&cmd, app_name);
-            nob_cmd_append(&cmd, "../src/main_hot_reload.c", COMMON_FLAGS);
-            if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
-#if defined(_MSC_VER)
-            nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
+    CompileGlslShadersInDirectory(&cmd, "../shaders");
+    nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".hlsl");
+    nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".spv");
+
+#if defined(_WIN32)
+    app_name = nob_temp_sprintf("%s.exe", app_name);
 #endif
-            if(!nob_cmd_run(&cmd)) return 1;
-        }
+
+    if(hotreload) {
+        if(ProgramAlreadyRunning(app_name)) return 0; // Done since we're not going to rerun the program
+        nob_mkdir_if_not_exists("hotreload");
+        nob_cc(&cmd);
+        nob_cc_output(&cmd, app_name);
+        nob_cmd_append(&cmd, "../src/main_hot_reload.c", COMMON_FLAGS);
+        if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
+#if defined(_MSC_VER)
+        nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
+#endif
+        if(!nob_cmd_run(&cmd)) return 1;
     } else {
         nob_cc(&cmd);
         nob_cc_output(&cmd, app_name);
-        nob_cmd_append(&cmd, "../src/main_no_hot_reload.c", COMMON_FLAGS, "-I", "../include");
+        nob_cmd_append(&cmd, "../src/main_no_hot_reload.c", COMMON_FLAGS, "-I", "../include", "-DSHADER_DIRECTORY=\"shaders/\"");
         if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
 #if defined(_MSC_VER)
         nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
 #endif
         cmd_cc_libpath(&cmd, "../lib");
-        cmd_cc_libs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
+        cmd_cc_libs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 
         if(!nob_cmd_run(&cmd)) return 1;
     }
 
     if(shouldrun) {
-#if defined(_WIN32)
-        nob_cmd_append(&cmd, nob_temp_sprintf("%s.exe", app_name));
-#else
         nob_cmd_append(&cmd, nob_temp_sprintf("./%s", app_name));
-#endif
         if(!nob_cmd_run(&cmd)) return 1;
     }
 

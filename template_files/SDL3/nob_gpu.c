@@ -56,15 +56,33 @@ void cmd_cc_libpath(Nob_Cmd *cmd, const char *path)
 }
 
 #if defined(_WIN32)
+#include <tlhelp32.h>
 bool ProgramAlreadyRunning(const char *program)
 {
     bool running = false;
-    HANDLE mut = CreateMutexA(0, FALSE, nob_temp_sprintf("Local\\%s", program));
-    if(GetLastError() == ERROR_ALREADY_EXISTS) {
-        running = true;
-    }
-    else if(mut) CloseHandle(mut);
 
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if(snapshot == INVALID_HANDLE_VALUE) {
+        nob_log(NOB_ERROR, "Could not enum processes: %s", nob_win32_error_message(GetLastError()));
+        return false;
+    }
+
+    PROCESSENTRY32 processInfo = {
+        .dwSize = sizeof(PROCESSENTRY32),
+    };
+    if(!Process32First(snapshot, &processInfo)) {
+        nob_log(NOB_ERROR, "Could not get process info: %s", nob_win32_error_message(GetLastError()));
+        CloseHandle(snapshot);
+        return false;
+    }
+    do {
+        if(!strcmp(&processInfo.szExeFile[0], program)) {
+            running = true;
+            break;
+        }
+    } while(Process32Next(snapshot, &processInfo));
+
+    CloseHandle(snapshot);
     return running;
 }
 #else
@@ -226,18 +244,22 @@ int main(int argc, char **argv)
     nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".hlsl");
     nob_copy_directory_recursively("../shaders", .dst = "shaders", .ext = ".spv");
 
-    if(hotreload) {
-        nob_mkdir_if_not_exists("hotreload");
-        if(!ProgramAlreadyRunning(app_name)) {
-            nob_cc(&cmd);
-            nob_cc_output(&cmd, app_name);
-            nob_cmd_append(&cmd, "../src/main_hot_reload.c", COMMON_FLAGS);
-            if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
-#if defined(_MSC_VER)
-            nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
+#if defined(_WIN32)
+    app_name = nob_temp_sprintf("%s.exe", app_name);
 #endif
-            if(!nob_cmd_run(&cmd)) return 1;
-        }
+
+    if(hotreload) {
+        if(ProgramAlreadyRunning(app_name)) return 0; // Done since we're not going to rerun the program
+        nob_mkdir_if_not_exists("hotreload");
+
+        nob_cc(&cmd);
+        nob_cc_output(&cmd, app_name);
+        nob_cmd_append(&cmd, "../src/main_hot_reload.c", COMMON_FLAGS);
+        if(warningsAsErrors) nob_cc_warnings_as_errors(&cmd);
+#if defined(_MSC_VER)
+        nob_cmd_append(&cmd, "-D_CRT_SECURE_NO_WARNINGS", "/link", "-incremental:no", "-opt:ref");
+#endif
+        if(!nob_cmd_run(&cmd)) return 1;
     } else {
         nob_cc(&cmd);
         nob_cc_output(&cmd, app_name);
@@ -253,11 +275,7 @@ int main(int argc, char **argv)
     }
 
     if(shouldrun) {
-#if defined(_WIN32)
-        nob_cmd_append(&cmd, nob_temp_sprintf("%s.exe", app_name));
-#else
         nob_cmd_append(&cmd, nob_temp_sprintf("./%s", app_name));
-#endif
         if(!nob_cmd_run(&cmd)) return 1;
     }
 
