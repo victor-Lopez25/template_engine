@@ -11,39 +11,24 @@ Even though there is a template called SDL3-gpu, this does not mean the others d
 
 I will look into issues but in general, I won't take pull requests unless they are for minor changes.
 
-### Usage
-
-Once compiled, you may run template_engine from a different directory like follows:
+### Quick start
 
 ```bash
-# example directory
-mkdir temp
-cd temp
-../template_engine <template name>
-```
-
-### Building
-
-Mac untested!!
-
-All you need to build the template engine is run a compiler on main.c:
-
-If on linux/mac:
-```bash
+# This first command to compile the template engine.
+# If you want to compile it again after changes, just run template_engine in the same directory.
 cc main.c -o template_engine
+
+# these commands to use a template from template_engine
+mkdir template
+cd template
+../template_engine SDL-hotreload
+# after compiling nob.c once, you can run nob and it'll compile itself if needed
+cc nob.c -o nob
+nob
 ```
+if on windows, add '.exe' to executables and use any c compiler, 'gcc', 'clang', or 'cl' instead of 'cc'
 
-If on windows:
-
-GCC: `gcc main.c -o template_engine.exe`
-
-clang: `clang main.c -o template_engine.exe`
-
-msvc: `cl main.c -Fe:template_engine.exe -nologo`
-
-Then, if you do any changes, just run `template_engine(.exe)` in the same folder and it will recompile itself
-
-The templates work exactly the same, just replace main.c with nob.c and the output should be nob(.exe), then run nob(.exe) and it'll compile the template and run it. (PS: msvc doesn't need the name of the executable if it's the same as the source)
+Some info specific of each template can be found in their READMEs after copying them or using the 'info' command
 
 ### Licencing
 

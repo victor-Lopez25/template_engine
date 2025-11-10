@@ -65,7 +65,7 @@ void Usage(char *program)
            "Possible templates are:\n"
            " - SDL3\n"
            " - SDL3-hotreload\n"
-           " - SDL3-gpu (wip)\n"
+           " - SDL3-gpu\n"
            "\n"
            "This program will make a template program in the current directory\n",
            program);
@@ -90,6 +90,32 @@ const char *TemplateToString(Template t)
 }
 
 Template chosenTemplate = Template_None;
+
+void GetInfo(Template t)
+{
+    fprintf(stderr, "[INFO] '%s':\n", TemplateToString(t));
+    Nob_String_Builder sb = {0};
+    char *readmeFileFmt = 0;
+    
+    switch(t) {
+        case Template_SDL3: {
+            readmeFileFmt = "%s/template_files/SDL3/README.md";
+        } break;
+        case Template_SDL3_Hotreload: {
+            readmeFileFmt = "%s/template_files/SDL3/README_hotreload.md";
+        } break;
+        case Template_SDL3_GPU_Hotreload: {
+            readmeFileFmt = "%s/template_files/SDL3/README_gpu.md";
+        } break;
+    }
+
+    if(!readmeFileFmt) {
+        fprintf(stderr, "Missing info for this template, make an issue on github: https://github.com/victor-Lopez25/template_engine/issues\n");
+        return;
+    }
+    nob_read_entire_file(nob_temp_sprintf("%s/template_files/SDL3/README.md", selfPath), &sb);
+    fprintf(stderr, "%.*s\n\n", (int)sb.count, sb.items);
+}
 
 #define SetupGeneralSDL3Templates(...) \
     SetupGeneralSDL3Templates_(((const char*[]){"SDL3", __VA_ARGS__}), \
@@ -317,6 +343,8 @@ int main(int argc, char **argv)
     const char *current_dir = nob_get_current_dir_temp();
     bool inExeDirectory = !strcmp(selfPath, current_dir);
 
+    bool gettingInfo = false;
+    bool gotInfo = false;
     for(int argIdx = 1; argIdx < argc; argIdx++) {
         char *arg = argv[argIdx];
         if(!strcmp(arg, "-h") || !strcmp(arg, "--help") || !strcmp(arg, "/?")) {
@@ -324,13 +352,22 @@ int main(int argc, char **argv)
             return 0;
         } else if(!strcmp(arg, "SDL3")) {
             chosenTemplate = Template_SDL3;
+            if(gettingInfo) { GetInfo(chosenTemplate); gotInfo = true; }
         } else if(!strcmp(arg, "SDL3-hotreload")) {
             chosenTemplate = Template_SDL3_Hotreload;
+            if(gettingInfo) { GetInfo(chosenTemplate); gotInfo = true; }
         } else if(!strcmp(arg, "SDL3-gpu")) {
             chosenTemplate = Template_SDL3_GPU_Hotreload;
+            if(gettingInfo) { GetInfo(chosenTemplate); gotInfo = true; }
         } else if(!strcmp(arg, "test")) {
             Test();
+            if(gettingInfo) {
+                fprintf(stderr, "[INFO] 'test': The 'test' flag is used mostly internally to check if each template passes its tests\n");
+                gotInfo = true;
+            }
             return 0;
+        } else if(!strcmp(arg, "info")) {
+            gettingInfo = true;
         }
     }
 
@@ -345,6 +382,15 @@ int main(int argc, char **argv)
             nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
         }
 #endif
+    }
+
+    if(gettingInfo) {
+        if(gotInfo) return 0;
+        else {
+            Usage(*argv);
+            fprintf(stderr, "Get info of a specific template doing %s info <template>\n", *argv);
+            return 1;
+        }
     }
 
     if(chosenTemplate == Template_None) {
