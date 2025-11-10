@@ -342,6 +342,7 @@ bool InitWorkQueue(SpallProfile *spall_ctx, WorkQueue *queue, Uint32 threadCount
 
 #define SHADER_FORMAT_HLSL 0
 #define SHADER_FORMAT_SPIRV 1
+#define SHADER_FORMAT_GLSL 2
 bool GetShaderStageFormatFromName(const char *shaderFile, SDL_ShaderCross_ShaderStage *stage, Uint32 *format)
 {
     char *c = (char*)shaderFile + SDL_strlen(shaderFile);
@@ -356,7 +357,10 @@ bool GetShaderStageFormatFromName(const char *shaderFile, SDL_ShaderCross_Shader
         *stage = SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
     } else if(!SDL_strncmp(c, "comp", strlen("comp"))) {
         *stage = SDL_SHADERCROSS_SHADERSTAGE_COMPUTE;
-    } else return false;
+    } else {
+        SDL_Log("ERROR: Unkown/unsupported shader stage");
+        return false;
+    }
     c += 4;
 
     if(*c != '.') return false;
@@ -365,7 +369,12 @@ bool GetShaderStageFormatFromName(const char *shaderFile, SDL_ShaderCross_Shader
         *format = SHADER_FORMAT_HLSL;
     } else if(!SDL_strncmp(c, "spv", strlen("spv"))) {
         *format = SHADER_FORMAT_SPIRV;
-    } else return false;
+    } else if(!SDL_strncmp(c, "glsl", strlen("glsl"))){
+        *format = SHADER_FORMAT_GLSL;
+    } else {
+        SDL_Log("ERROR: Unknown/unsupported shader format");
+        return false;
+    }
 
     return true;
 }
@@ -392,6 +401,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
     size_t shaderFileSize;
     const char *shaderFileData = (const char*)SDL_LoadFile(info->filename, &shaderFileSize);
     if(!shaderFileData) {
+        SDL_Log("ERROR: Could not read file %s: %s", info->filename, SDL_GetError());
         Spall_BufferEnd(spall_ctx, spall_buffer);
         return false;
     }
@@ -411,7 +421,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
             bytecode = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &bytecodeSize);
             SDL_free((void*)shaderFileData);
             if(!bytecode) {
-                SDL_Log("ERROR: %s: %s", info->filename, SDL_GetError());
+                SDL_Log("ERROR: Failed to compile hlsl source '%s' to spv", info->filename, SDL_GetError());
                 Spall_BufferEnd(spall_ctx, spall_buffer);
                 return false;
             }
@@ -420,6 +430,37 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
         case SHADER_FORMAT_SPIRV: {
             bytecode = (void*)shaderFileData;
             bytecodeSize = shaderFileSize;
+        } break;
+
+        case SHADER_FORMAT_GLSL: {
+            char outname[1024];
+            char stagename[64];
+            SDL_snprintf(outname, sizeof(outname), "%.*sspv", (int)(strlen(info->filename) - strlen("glsl")), info->filename);
+            char *stagestr;
+            switch(stage) {
+                case SDL_SHADERCROSS_SHADERSTAGE_VERTEX: stagestr = "vert"; break;
+                case SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT: stagestr = "frag"; break;
+                case SDL_SHADERCROSS_SHADERSTAGE_COMPUTE: stagestr = "comp"; break;
+                default: stagestr = "";
+            }
+            SDL_snprintf(stagename, sizeof(stagename), "-fshader-stage=%s", stagestr);
+            
+            int status;
+            const char *args[] = {"glslc", "-o", outname, stagename, info->filename, NULL};
+            SDL_Process *process = SDL_CreateProcess(args, true);
+            SDL_WaitProcess(process, true, &status);
+            if(status != 0) {
+                SDL_Log("ERROR: Failed to compile glsl source '%s' to spv", info->filename);
+                Spall_BufferEnd(spall_ctx, spall_buffer);
+                return false;
+            }
+
+            bytecode = (const char*)SDL_LoadFile(outname, &bytecodeSize);
+            if(!bytecode) {
+                SDL_Log("ERROR: Could not read file %s: %s", outname, SDL_GetError());
+                Spall_BufferEnd(spall_ctx, spall_buffer);
+                return false;
+            }
         } break;
 
         default: return false;
@@ -745,7 +786,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
     ctx->fillPipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
 
     InitPipelineCompileContext(ctx, &ctx->fillPipelineCompileCtx, 
-        "shader.vert.spv", "shader.frag.spv", &ctx->fillPipeline, VertexInstance);
+        "shader.vert.glsl", "shader.frag.glsl", &ctx->fillPipeline, VertexInstance);
     PipelineFromShaders(&ctx->fillPipelineCompileCtx, true);
     if(!ctx->fillPipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create fill pipeline");
@@ -754,7 +795,7 @@ DLL_EXPORT bool InitAll(void *rawdata)
 
     ctx->linePipelineCompileCtx.info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
     InitPipelineCompileContext(ctx, &ctx->linePipelineCompileCtx, 
-        "shader.vert.spv", "shader.frag.spv", &ctx->linePipeline, VertexInstance);
+        "shader.vert.glsl", "shader.frag.glsl", &ctx->linePipeline, VertexInstance);
     PipelineFromShaders(&ctx->linePipelineCompileCtx, true);
     if(!ctx->linePipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create line pipeline");
