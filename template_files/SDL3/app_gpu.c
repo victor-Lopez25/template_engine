@@ -421,7 +421,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
             bytecode = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &bytecodeSize);
             SDL_free((void*)shaderFileData);
             if(!bytecode) {
-                SDL_Log("ERROR: Failed to compile hlsl source '%s' to spv", info->filename, SDL_GetError());
+                SDL_Log("ERROR: Failed to compile hlsl source '%s' to spv: %s", info->filename, SDL_GetError());
                 Spall_BufferEnd(spall_ctx, spall_buffer);
                 return false;
             }
@@ -455,7 +455,7 @@ bool CompileShader(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, SDL_GPUDe
                 return false;
             }
 
-            bytecode = (const char*)SDL_LoadFile(outname, &bytecodeSize);
+            bytecode = (char*)SDL_LoadFile(outname, &bytecodeSize);
             if(!bytecode) {
                 SDL_Log("ERROR: Could not read file %s: %s", outname, SDL_GetError());
                 Spall_BufferEnd(spall_ctx, spall_buffer);
