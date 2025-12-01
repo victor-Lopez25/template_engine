@@ -1,15 +1,16 @@
 #define DLL_EXPORT static
 #include "app.c"
 
-#define NOB_IMPLEMENTATION
-#include "../nob.h"
+#define VICLIB_PATH "src/viclib.h"
+#define VL_BUILD_IMPLEMENTATION
+#include "../vl_build.h"
 
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    nob_set_current_dir(nob_temp_dir_name(nob_temp_running_executable_path()));
+    VL_SetCurrentDir(VL_temp_DirName(VL_temp_RunningExecutablePath()));
 
-    void *appMemory = malloc(MemorySize());
+    void *appMemory = SDL_malloc(MemorySize());
     if(!appMemory) {
         fprintf(stderr, "Could not allocate memory for app");
         return 1;
@@ -17,7 +18,7 @@ int main(int argc, char **argv)
 
     SDL_memset4(appMemory, 0, MemorySize()/4);
     if(!InitAll(appMemory)) {
-        free(appMemory);
+        SDL_free(appMemory);
         return 1;
     }
 
@@ -27,7 +28,7 @@ int main(int argc, char **argv)
     }
 
     DeInitAll(appMemory);
-    free(appMemory);
+    SDL_free(appMemory);
 
     return 0;
 }

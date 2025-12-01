@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define NOB_IMPLEMENTATION
-#include "../nob.h"
+#define VICLIB_PATH "src/viclib.h"
+#define VL_BUILD_IMPLEMENTATION
+#include "../vl_build.h"
 
 #if defined(_WIN32)
 # define DLL_EXT ".dll"
@@ -46,19 +47,6 @@ typedef struct {
 #if defined(_WIN32)
 #define WINDOWS_LEAN_AND_MEAN
 #include <windows.h>
-bool GetLastWriteTime(const char *fileName, uint64_t *writeTime)
-{
-    bool ok = false;
-    WIN32_FILE_ATTRIBUTE_DATA data;
-    if(GetFileAttributesEx(fileName, GetFileExInfoStandard, &data) &&
-        (uint64_t)data.nFileSizeHigh + (uint64_t)data.nFileSizeLow > 0)
-    {
-        *writeTime = *(uint64_t*)&data.ftLastWriteTime;
-        ok = true;
-    }
-    return ok;
-}
-
 bool LoadProgramApi(ProgramApi *api, int version)
 {
     bool ok = false;
@@ -66,9 +54,9 @@ bool LoadProgramApi(ProgramApi *api, int version)
 
     if(!GetFileAttributesExA(LOCK_FILE_NAME, GetFileExInfoStandard, &ignore)) {
         if(GetLastWriteTime(DLL_NAME, &api->modificationTime)) {
-            size_t mark = nob_temp_save();
-            char *dllname = nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, version);
-            nob_temp_rewind(mark);
+            size_t mark = temp_save();
+            char *dllname = temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, version);
+            temp_rewind(mark);
             CopyFile(DLL_NAME, dllname, FALSE);
 
             api->library = LoadLibraryA(dllname);
@@ -85,7 +73,7 @@ bool LoadProgramApi(ProgramApi *api, int version)
 
                 if(ok) api->version = version;
             } else {
-                printf("%s\n", nob_win32_error_message(GetLastError()));
+                printf("%s\n", Win32_ErrorMessage(GetLastError()));
             }
         }
     }
@@ -100,51 +88,17 @@ void UnloadApi(ProgramApi *api)
             fprintf(stderr, "Could not unload " DLL_NAME ": %lu", GetLastError());
         }
     }
-    size_t mark = nob_temp_save();
-    if(!DeleteFile(nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, api->version))) {
+    size_t mark = temp_save();
+    if(!DeleteFile(temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, api->version))) {
         fprintf(stderr, "Could not delete dll file");
     }
-    nob_temp_rewind(mark);
+    temp_rewind(mark);
 }
 #else
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-
-bool GetLastWriteTime(const char *fileName, uint64_t *writeTime)
-{
-    struct stat attr;
-    bool ok = false;
-    if(!stat(fileName, &attr) && attr.st_size > 0) {
-        ok = true;
-        *writeTime = *(uint64_t*)&attr.st_mtim;
-    }
-    return ok;
-}
-
-bool CopyFile(const char *src, const char *dst)
-{
-    int fd_src = open(src, O_RDONLY);
-    int fd_dst = open(dst, O_CREAT|O_WRONLY|O_TRUNC);
-
-    bool ok = false;
-
-    if(fd_src == -1 || fd_dst == -1) return false;
-
-    struct stat attr;
-    if(!fstat(fd_src, &attr)) {
-        void *buf = malloc(attr.st_size);
-        if(buf) {
-            if(read(fd_src, buf, attr.st_size) == attr.st_size &&
-               write(fd_dst, buf, attr.st_size) == attr.st_size) {
-                ok = true;
-            }
-            free(buf);
-        }
-    }
-    return ok;
-}
 
 bool LoadProgramApi(ProgramApi *api, int version)
 {
@@ -154,7 +108,7 @@ bool LoadProgramApi(ProgramApi *api, int version)
         size_t mark = nob_temp_save();
         char *dllname = nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, version);
         nob_temp_rewind(mark);
-        if(CopyFile(DLL_NAME, dllname, FALSE)) {
+        if(VL_CopyFile(DLL_NAME, dllname, FALSE)) {
             api->library = dlopen(dllname, RTLD_NOW);
             if(api->library) {
                 api->initAll = (BoolVoidStarProc)dlsym(api->library, "InitAll");
@@ -182,11 +136,11 @@ void UnloadApi(ProgramApi *api)
             fprintf(stderr, "Could not unload " DLL_NAME ": %s", dlerror());
         }
     }
-    size_t mark = temp_buf_size;
-    if(unlink(nob_temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, api->version))) {
+    size_t mark = temp_save();
+    if(unlink(temp_sprintf(DLL_DIR "/app_%d" DLL_EXT, api->version))) {
         fprintf(stderr, "Could not delete dll file");
     }
-    temp_buf_size = mark;
+    temp_rewind(mark);
 }
 #endif
 
@@ -199,8 +153,8 @@ typedef struct {
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    char *exe_dir = nob_temp_dir_name(nob_temp_running_executable_path());
-    nob_set_current_dir(exe_dir);
+    char *exe_dir = VL_temp_DirName(VL_temp_RunningExecutablePath());
+    VL_SetCurrentDir(exe_dir);
 
     int version = 0;
     ProgramApi api = {0};
@@ -234,7 +188,7 @@ int main(int argc, char **argv)
             if(LoadProgramApi(&newApi, version)) {
                 if(api.memorySize() == newApi.memorySize()) {
                     // normal hot reload
-                    nob_da_append(&oldApis, api);
+                    da_Append(&oldApis, api);
                     api.deInitPartial(appMemory);
                     memcpy(&api, &newApi, sizeof(ProgramApi));
                     api.initPartial(appMemory);
@@ -274,7 +228,7 @@ endProgram:
     for(size_t apiIdx = 0; apiIdx < oldApis.count; apiIdx++) {
         UnloadApi(&oldApis.items[apiIdx]);
     }
-    NOB_FREE(oldApis.items);
+    da_Free(oldApis);
 
     return 0;
 }

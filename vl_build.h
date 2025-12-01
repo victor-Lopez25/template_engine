@@ -1,5 +1,5 @@
 // [vl_build.h](https://github.com/victor-Lopez25/viclib) © 2024 by [Víctor López Cortés](https://github.com/victor-Lopez25) is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-// version: 1.3.1
+// version: 1.3.2
 #ifndef VL_BUILD_H
 #define VL_BUILD_H
 
@@ -1507,23 +1507,6 @@ VLIBPROC const char *VL_temp_GetCurrentDir(void)
 #endif // _WIN32
 }
 
-VLIBPROC bool VL_SetCurrentDir(const char *path)
-{
-#ifdef _WIN32
-    if(!SetCurrentDirectory(path)) {
-        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, Win32_ErrorMessage(GetLastError()));
-        return false;
-    }
-    return true;
-#else
-    if(chdir(path) < 0) {
-        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, strerror(errno));
-        return false;
-    }
-    return true;
-#endif // _WIN32
-}
-
 struct vl__pushd_buf_type VL__pushDirectoryBuffer;
 
 VLIBPROC bool VL_Pushd(const char *path)
@@ -1541,6 +1524,12 @@ VLIBPROC bool VL_Pushd(const char *path)
         VL__pushDirectoryBuffer.items[VL__pushDirectoryBuffer.count] = 
             temp_sprintf("%s/%s", VL__pushDirectoryBuffer.items[VL__pushDirectoryBuffer.count - 1], path);
         VL__pushDirectoryBuffer.count++;
+    } else {
+#if defined(_WIN32)
+        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, Win32_ErrorMessage(GetLastError()));
+#else
+        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, strerror(errno));
+#endif
     }
     return ok;
 }
@@ -1548,8 +1537,16 @@ VLIBPROC bool VL_Pushd(const char *path)
 VLIBPROC bool VL_Popd(void)
 {
     AssertMsg(VL__pushDirectoryBuffer.count > 1, "Need to do pushd before popd");
-    bool ok = VL_SetCurrentDir(VL__pushDirectoryBuffer.items[VL__pushDirectoryBuffer.count - 2]);
+    const char *path = VL__pushDirectoryBuffer.items[VL__pushDirectoryBuffer.count - 2];
+    bool ok = VL_SetCurrentDir(path);
     if(ok) VL__pushDirectoryBuffer.count--;
+    else {
+#if defined(_WIN32)
+        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, Win32_ErrorMessage(GetLastError()));
+#else
+        VL_Log(VL_ERROR, "could not set current directory to %s: %s", path, strerror(errno));
+#endif
+    }
     return ok;
 }
 
