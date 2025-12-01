@@ -19,42 +19,18 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
-
-#if defined(_WIN32)
-# if defined(SHORTCUT_PATH)
-#  define SHORTCUT_PATH_ARG , "-DSHORTCUT_PATH=\"" SHORTCUT_PATH "\""
-# else
-#  define SHORTCUT_PATH_ARG
-# endif
-
-# if defined(__GNUC__)
-#  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
-#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "gcc", "-o", binary_path, source_path, "-Wall", "-Wextra" SHORTCUT_PATH_ARG
-# elif defined(__clang__)
-#  define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
-#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "clang", "-o", binary_path, source_path, "-Wall", "-Wextra" SHORTCUT_PATH_ARG
-# elif defined(_MSC_VER)
-#  define COMMON_FLAGS_NODEBUG "/nologo", "-FC", "-GR-", "-EHa", "-W4"
-#  define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-Zi"
-#  define NOB_REBUILD_URSELF(binary_path, source_path) "cl.exe", nob_temp_sprintf("/Fe:%s", (binary_path)), source_path, COMMON_FLAGS SHORTCUT_PATH_ARG, "/link", "-incremental:no"
-# endif
+#if defined(_WIN32) && defined(SHORTCUT_PATH)
+# define SHORTCUT_PATH_ARG , "-DSHORTCUT_PATH=\"" SHORTCUT_PATH "\""
 #else
-# define COMMON_FLAGS_NODEBUG "-Wall", "-Wextra"
-# define COMMON_FLAGS COMMON_FLAGS_NODEBUG, "-g"
-# define NOB_REBUILD_URSELF(binary_path, source_path) "cc", "-o", binary_path, source_path, COMMON_FLAGS
+# define SHORTCUT_PATH_ARG
 #endif
 
-#define NOB_IMPLEMENTATION
-#include "nob.h"
+#define VL_REBUILD_URSELF(bin, src) VL_DEFAULT_REBUILD_URSELF(bin, src), SHORTCUT_PATH_ARG
+#define VL_BUILD_IMPLEMENTATION
+#include "vl_build.h"
 
 #if defined(_WIN32)
-#include <ConsoleApi.h>
-#endif
-
-#ifndef OUT_DIRECTORY
-# define OUT_DIRECTORY "bin"
+#include <consoleapi.h>
 #endif
 
 char *selfPath;
@@ -94,7 +70,7 @@ Template chosenTemplate = Template_None;
 void GetInfo(Template t)
 {
     fprintf(stderr, "[INFO] '%s':\n", TemplateToString(t));
-    Nob_String_Builder sb = {0};
+    string_builder sb = {0};
     char *readmeFileFmt = 0;
     
     switch(t) {
@@ -107,13 +83,15 @@ void GetInfo(Template t)
         case Template_SDL3_GPU_Hotreload: {
             readmeFileFmt = "%s/template_files/SDL3/README_gpu.md";
         } break;
+        
+        case Template_None: case Count_Templates: Assert(!"unreachable");
     }
 
     if(!readmeFileFmt) {
         fprintf(stderr, "Missing info for this template, make an issue on github: https://github.com/victor-Lopez25/template_engine/issues\n");
         return;
     }
-    nob_read_entire_file(nob_temp_sprintf("%s/template_files/SDL3/README.md", selfPath), &sb);
+    sb_ReadEntireFile(temp_sprintf("%s/template_files/SDL3/README.md", selfPath), &sb);
     fprintf(stderr, "%.*s\n\n", (int)sb.count, sb.items);
 }
 
@@ -122,107 +100,109 @@ void GetInfo(Template t)
                                (sizeof((const char*[]){"SDL3", __VA_ARGS__})/sizeof(const char*)))
 void SetupGeneralSDL3Templates_(const char **libs, size_t libcount)
 {
-    nob_mkdir_if_not_exists("src");
-    nob_mkdir_if_not_exists("lib");
-    nob_mkdir_if_not_exists("include");
-    nob_mkdir_if_not_exists("dependencies");
+    MkdirIfNotExist("src");
+    MkdirIfNotExist("lib");
+    MkdirIfNotExist("include");
+    MkdirIfNotExist("dependencies");
 
-    size_t mark = nob_temp_save();
+    size_t mark = temp_save();
 
     for(size_t i = 0; i < libcount; i++) {
-        nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/bin/%s.dll", selfPath, libs[i]), nob_temp_sprintf("dependencies/%s.dll", libs[i]));
-        nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/lib/%s.lib", selfPath, libs[i]), nob_temp_sprintf("lib/%s.lib", libs[i]));
+        VL_CopyFile(temp_sprintf("%s/template_files/SDL3/bin/%s.dll", selfPath, libs[i]), temp_sprintf("dependencies/%s.dll", libs[i]));
+        VL_CopyFile(temp_sprintf("%s/template_files/SDL3/lib/%s.lib", selfPath, libs[i]), temp_sprintf("lib/%s.lib", libs[i]));
     }
 
-    nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/include", selfPath), "include/SDL3");
+    VL_CopyDirectoryRecursively(temp_sprintf("%s/template_files/SDL3/include", selfPath), "include/SDL3");
 
-    nob_copy_file(nob_temp_sprintf("%s/template_files/spall.h", selfPath), "src/spall.h");
-    nob_copy_file(nob_temp_sprintf("%s/nob.h", selfPath), "nob.h");
+    VL_CopyFile(temp_sprintf("%s/template_files/spall.h", selfPath), "src/spall.h");
+    VL_CopyFile(temp_sprintf("%s/viclib.h", selfPath), "src/viclib.h");
+    VL_CopyFile(temp_sprintf("%s/vl_build.h", selfPath), "vl_build.h");
 
-    nob_temp_rewind(mark);
+    temp_rewind(mark);
 }
 
 void DoTemplate(Template chosen)
 {
-    NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
+    Assert(chosen > Template_None || chosen < Count_Templates);
 
-    nob_log(NOB_INFO, "Chosen template: %s\n", TemplateToString(chosen));
+    VL_Log(VL_INFO, "Chosen template: %s\n", TemplateToString(chosen));
     switch(chosen) {
         case Template_SDL3: {
             // SDL3_mixer also?
             SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf");
 
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob.c", selfPath), "nob.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README.md", selfPath), "README.md");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/main.c", selfPath), "src/main.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/build.c", selfPath), "build.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/README.md", selfPath), "README.md");
         } break;
 
         case Template_SDL3_Hotreload: {
             // SDL3_mixer also?
             SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf");
 
-            nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app.c", selfPath), "src/app.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_hotreload.c", selfPath), "nob.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README_hotreload.md", selfPath), "README.md");
+            VL_CopyFile(temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/app.c", selfPath), "src/app.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/build_hotreload.c", selfPath), "build.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/README_hotreload.md", selfPath), "README.md");
         } break;
 
         case Template_SDL3_GPU_Hotreload: {
             SetupGeneralSDL3Templates("SDL3_image", "SDL3_ttf", "SDL3_shadercross");
 
-            nob_copy_directory_recursively(nob_temp_sprintf("%s/template_files/SDL3/shaders", selfPath), "shaders");
+            VL_CopyDirectoryRecursively(temp_sprintf("%s/template_files/SDL3/shaders", selfPath), "shaders");
 
-            nob_copy_file(nob_temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/nob_gpu.c", selfPath), "nob.c");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/SDL3/README_gpu.md", selfPath), "README.md");
+            VL_CopyFile(temp_sprintf("%s/template_files/main_hot_reload.c", selfPath), "src/main_hot_reload.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/main_no_hot_reload.c", selfPath), "src/main_no_hot_reload.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/app_gpu.c", selfPath), "src/app.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/build_gpu.c", selfPath), "build.c");
+            VL_CopyFile(temp_sprintf("%s/template_files/SDL3/README_gpu.md", selfPath), "README.md");
 
-            nob_mkdir_if_not_exists("resources");
-            nob_copy_file(nob_temp_sprintf("%s/template_files/resources/cat.jpg", selfPath), "resources/cat.jpg");
+            MkdirIfNotExist("resources");
+            VL_CopyFile(temp_sprintf("%s/template_files/resources/cat.jpg", selfPath), "resources/cat.jpg");
         } break;
 
         case Template_None: case Count_Templates: break;
     }
 }
 
-bool TestTemplate(Nob_Cmd *cmd, Template chosen)
+bool TestTemplate(vl_cmd *cmd, Template chosen)
 {
-    NOB_ASSERT(chosen > Template_None || chosen < Count_Templates);
+    Assert(chosen > Template_None || chosen < Count_Templates);
 
 #define X(...) { \
     .items = (const char*[]){__VA_ARGS__}, \
     .count = (sizeof((const char*[]){__VA_ARGS__})/sizeof(const char*)) }
-        struct { char **items; size_t count; } cmdItems[] = {
+        struct { const char **items; size_t count; } cmdItems[] = {
 #if defined(_WIN32)
-            X("gcc", "nob.c", "-o", "nob.exe", "-Wall", "-Wextra", "-Werror"),
-            X("clang", "nob.c", "-o", "nob.exe", "-Wall", "-Wextra", "-Werror"),
-            X("cl", "nob.c", "/nologo", "-FC", "-GR-", "-EHa", "-W4", "-WX"),
+            X("gcc", "build.c", "-o", "build.exe", "-Wall", "-Wextra", "-Werror"),
+            X("clang", "build.c", "-o", "build.exe", "-Wall", "-Wextra", "-Werror"),
+            X("cl", "build.c", "/nologo", "-FC", "-GR-", "-EHa", "-W4", "-WX"),
 #else
-            X("cc", "nob.c", "-o", "nob", "-Wall", "-Wextra", "-Werror"),
+            X("cc", "build.c", "-o", "build", "-Wall", "-Wextra", "-Werror"),
 #endif
         };
 #undef X
+
     switch(chosen) {
         case Template_SDL3: {
-            for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
-                nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
-                if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "test");
-                if(!nob_cmd_run(cmd)) return false;
+            for(size_t i = 0; i < ArrayLen(cmdItems); i++) {
+                da_AppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
+                if(!CmdRun(cmd)) return false;
+                cmd_Append(cmd, "build", "test");
+                if(!CmdRun(cmd)) return false;
             }
         } break;
 
         case Template_SDL3_Hotreload:
         case Template_SDL3_GPU_Hotreload: {
-            for(size_t i = 0; i < NOB_ARRAY_LEN(cmdItems); i++) {
-                nob_da_append_many(cmd, cmdItems[i].items, cmdItems[i].count);
-                if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "test", "hotreload");
-                if(!nob_cmd_run(cmd)) return false;
-                nob_cmd_append(cmd, "nob", "test", "nohotreload");
-                if(!nob_cmd_run(cmd)) return false;
+            for(size_t i = 0; i < ArrayLen(cmdItems); i++) {
+                da_AppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
+                if(!CmdRun(cmd)) return false;
+                cmd_Append(cmd, "build", "test", "hotreload");
+                if(!CmdRun(cmd)) return false;
+                cmd_Append(cmd, "build", "test", "nohotreload");
+                if(!CmdRun(cmd)) return false;
             }
         } break;
 
@@ -234,39 +214,39 @@ bool TestTemplate(Nob_Cmd *cmd, Template chosen)
 
 bool RemoveDirectoryRecursive(const char *dir)
 {
-    Nob_File_Type type = nob_get_file_type(dir);
-    if(type == NOB_FILE_DIRECTORY) { // directory
-        Nob_File_Paths paths = {0};
-        size_t mark = nob_temp_save();
-        nob_read_entire_dir(dir, &paths);
+    file_type type = VL_GetFileType(dir);
+    if(type == VL_FILE_DIRECTORY) { // directory
+        vl_file_paths paths = {0};
+        size_t mark = temp_save();
+        VL_ReadEntireDir(dir, &paths);
         for(size_t pathIdx = 0; pathIdx < paths.count; pathIdx++)
         {
             if(strcmp(paths.items[pathIdx], ".") && strcmp(paths.items[pathIdx], "..")) {
-                if(!RemoveDirectoryRecursive(nob_temp_sprintf("%s/%s", dir, paths.items[pathIdx]))) {
-                    NOB_FREE(paths.items);
-                    nob_temp_rewind(mark);
+                if(!RemoveDirectoryRecursive(temp_sprintf("%s/%s", dir, paths.items[pathIdx]))) {
+                    VL_FREE(paths.items);
+                    temp_rewind(mark);
                     return false;
                 }
             }
         }
-        NOB_FREE(paths.items);
-        nob_temp_rewind(mark);
+        VL_FREE(paths.items);
+        temp_rewind(mark);
 #if defined(_WIN32)
         return RemoveDirectoryA(dir);
 #else
         return rmdir(dir) == 0;
 #endif
-    } else if(type == NOB_FILE_REGULAR) { // normal file
-        return nob_delete_file(dir);
-    } else if(type == NOB_FILE_SYMLINK) {
+    } else if(type == VL_FILE_REGULAR) { // normal file
+        return VL_DeleteFile(dir);
+    } else if(type == VL_FILE_SYMLINK) {
 #if defined(_WIN32)
-        nob_log(NOB_WARNING, "Symlink deleting is not supported on windows for now, skipped deleting '%s'", dir);
+        VL_Log(VL_WARNING, "Symlink deleting is not supported on windows for now, skipped deleting '%s'", dir);
         return true;
 #else
         return unlink(dir) == 0;
 #endif
-    } else if(type == NOB_FILE_OTHER) {
-        nob_log(NOB_WARNING, "Unknown file type of file '%s'", dir);
+    } else if(type == VL_FILE_OTHER) {
+        VL_Log(VL_WARNING, "Unknown file type of file '%s'", dir);
         return true;
     }
     return false;
@@ -302,24 +282,24 @@ const char *SuccessOrFail(bool success)
 
 void Test(void)
 {
-    Nob_Cmd cmd = {0};
+    vl_cmd cmd = {0};
     bool returnOnFirstFail = true;
     bool success = true;
-    nob_minimal_log_level = NOB_ERROR;
+    VL_MinimalLogLevel = VL_ERROR;
     RemoveDirectoryRecursive("temp");
     for(int templateIdx = Template_None+1; templateIdx < Count_Templates; templateIdx++)
     {
-        nob_mkdir_if_not_exists("temp");
-        nob_set_current_dir("temp");
+        MkdirIfNotExist("temp");
+        VL_SetCurrentDir("temp");
 
         DoTemplate((Template)templateIdx);
-        nob_minimal_log_level = NOB_INFO;
+        VL_MinimalLogLevel = VL_INFO;
 
         bool ok = TestTemplate(&cmd, (Template)templateIdx);
-        nob_minimal_log_level = NOB_ERROR;
+        VL_MinimalLogLevel = VL_ERROR;
 
         printf("Test: %s - %s\n", TemplateToString((Template)templateIdx), SuccessOrFail(ok));
-        nob_set_current_dir("..");
+        VL_SetCurrentDir("..");
         if(!ok) {
             if(returnOnFirstFail) return;
             else success = false;
@@ -331,16 +311,16 @@ void Test(void)
 
 int main(int argc, char **argv)
 {
-    char *exe_path = nob_temp_running_executable_path();
-    selfPath = nob_temp_dir_name(exe_path);
-    for(size_t i = strlen(selfPath) - 1; i >= 0; i--) {
+    char *exe_path = VL_temp_RunningExecutablePath();
+    selfPath = VL_temp_DirName(exe_path);
+    for(int i = (int)strlen(selfPath) - 1; i >= 0; i--) {
         if(selfPath[i] == '/' || selfPath[i] == '\\') {
             selfPath[i] = '\0';
             break;
         }
     }
-    
-    const char *current_dir = nob_get_current_dir_temp();
+
+    const char *current_dir = VL_temp_GetCurrentDir();
     bool inExeDirectory = !strcmp(selfPath, current_dir);
 
     bool gettingInfo = false;
@@ -372,14 +352,14 @@ int main(int argc, char **argv)
     }
 
     if(inExeDirectory) {
-        NOB_GO_REBUILD_URSELF(argc, argv);
+        VL_GO_REBUILD_URSELF(argc, argv);
 #if defined(_WIN32) && defined(SHORTCUT_PATH)
         size_t exe_name_len = strlen(argv[0]);
         if(exe_name_len < 5 || strcmp(argv[0] + exe_name_len - 4, ".exe")) {
-            nob_log(NOB_ERROR, "Need executable to have '.exe' extension to make a shortcut");
+            VL_Log(NOB_ERROR, "Need executable to have '.exe' extension to make a shortcut");
         } else {
-            system(nob_temp_sprintf("make_shortcut.bat %.*s "SHORTCUT_PATH, exe_name_len - 4, argv[0]));
-            nob_log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
+            system(temp_sprintf("make_shortcut.bat %.*s "SHORTCUT_PATH, exe_name_len - 4, argv[0]));
+            VL_Log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
         }
 #endif
     }
