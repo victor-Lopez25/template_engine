@@ -94,7 +94,7 @@ bool ProgramAlreadyRunning(const char *program)
 bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 {
     VL_cc(cmd);
-    cmd_Append(cmd, "../src/app.c", "-I", "../include");
+    cmd_Append(cmd, "../src/app.c", "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
     VL_ccOutput(cmd, "app" DLL_EXT);
     VL_ccWarnings(cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(cmd);
@@ -109,7 +109,7 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
     cmd_Append(cmd, "-shared");
 #endif
 
-    VL_ccLibs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
+    VL_ccLibs(cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 
 #if defined(_MSC_VER)
 # define LOCK_FILE_NAME "lock.tmp"
@@ -124,9 +124,58 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
     return true;
 }
 
+// NOTE: For glslc
+char *GetShaderstageFromExt(view file) {
+    if(view_EndWith(file, VIEW_STATIC(".vert"))) {
+        return "vert"; // 'vertex' is also valid
+    } if(view_EndWith(file, VIEW_STATIC(".frag"))) {
+        return "frag"; // 'fragment' is also valid
+    } if(view_EndWith(file, VIEW_STATIC(".comp"))) {
+        return "comp"; // 'compute' is also valid
+    } else return 0; // SDL_gpu doesn't support others If I understand correctly
+}
+
+bool CompileGlslShader(vl_cmd *cmd, view shaderfile)
+{
+    // NOTE: To compile glsl shaders, glslc is required
+    view noGlslExt = view_FromParts(shaderfile.items, shaderfile.count - strlen(".glsl"));
+    char *output = temp_sprintf(VIEW_FMT".spv", VIEW_ARG(noGlslExt));
+    if(VL_NeedsRebuild(output, shaderfile.items) == 1) {
+        char *shaderStage = GetShaderstageFromExt(noGlslExt);
+        if(!shaderStage) {
+            VL_Log(VL_ERROR, "Invalid extension in shader file referencing shader stage '"VIEW_FMT"'", VIEW_ARG(shaderfile));
+            return false;
+        }
+        cmd_Append(cmd, "glslc", "-o", output, 
+            temp_sprintf("-fshader-stage=%s", shaderStage), shaderfile.items);
+        if(!CmdRun(cmd)) {
+            VL_Log(VL_ERROR, "Could not compile "VIEW_FMT" to %s", VIEW_ARG(noGlslExt), output);
+            return false;
+        }
+    }
+    return true;
+}
+
+void CompileGlslShadersInDirectory(vl_cmd *cmd, const char *directory)
+{
+    vl_file_paths files = {0};
+    if(VL_ReadEntireDir(directory, &files)) {
+        for(size_t fileIdx = 0; fileIdx < files.count; fileIdx++) {
+            const char *file = temp_sprintf("%s/%s", directory, files.items[fileIdx]);
+            view fileView = view_FromCstr(file);
+            if(VL_GetFileType(file) == VL_FILE_REGULAR && 
+               view_EndWith(fileView, VIEW_STATIC(".glsl")))
+            {
+                CompileGlslShader(cmd, fileView);
+            }
+        }
+    }
+    VL_FREE(files.items);
+}
+
 int main(int argc, char **argv)
 {
-    VL_GO_REBUILD_URSELF(argc, argv);
+    //VL_GO_REBUILD_URSELF(argc, argv);
 
 #define EXE_NAME "template"
 
@@ -150,9 +199,15 @@ int main(int argc, char **argv)
 
     VL_CopyDirectoryRecursively("dependencies", "bin");
     VL_Pushd("bin");
+    VL_CopyDirectoryRecursively("../resources", "resources");
 
     vl_cmd cmd = {0};
     if(!CompileApp(&cmd, warningsAsErrors)) return 1;
+
+    CompileGlslShadersInDirectory(&cmd, "../shaders");
+    VL_CopyDirectoryRecursively("../shaders", .dst = "shaders", .ext = ".hlsl");
+    VL_CopyDirectoryRecursively("../shaders", .dst = "shaders", .ext = ".glsl");
+    VL_CopyDirectoryRecursively("../shaders", .dst = "shaders", .ext = ".spv");
 
     if(hotreload) {
         MkdirIfNotExist("hotreload");
@@ -169,11 +224,11 @@ int main(int argc, char **argv)
         if(!CmdRun(&cmd)) return 1;
     } else {
         VL_cc(&cmd);
-        cmd_Append(&cmd, "../src/main_no_hot_reload.c", "-I", "../include");
+        cmd_Append(&cmd, "../src/main_no_hot_reload.c", "-I", "../include", "-DSHADER_DIRECTORY=\"shaders/\"");
         VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
         VL_ccWarnings(&cmd);
         if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
-        VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
+        VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
 #if defined(_WIN32)
         VL_ccLibpath(&cmd, "../lib");
 #endif

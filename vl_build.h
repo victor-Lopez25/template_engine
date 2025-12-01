@@ -319,8 +319,8 @@ extern vl_needrebuild_context VL_needsRebuildContext;
 #define VL_BUILD_FILENAME_HASH(v, hash) do {\
     /* djb2 */ \
     hash = 5381; \
-    for(int i = 0; i < (int)v.count; i++) \
-        hash = ((hash << 5) + hash) + v.items[i]; /* hash * 33 + c */ \
+    for(int hashIdx = 0; hashIdx < (int)v.count; hashIdx++) \
+        hash = ((hash << 5) + hash) + v.items[hashIdx]; /* hash * 33 + c */ \
     } while(0)
 #endif // VL_BUILD_FILENAME_HASH
 
@@ -1164,6 +1164,7 @@ defer:
     if(optFdout) fd_Close(*optFdout);
     if(optFderr) fd_Close(*optFderr);
     opt.cmd->count = 0;
+    opt.cmd->msvc_linkflags = 0;
     return result;
 }
 

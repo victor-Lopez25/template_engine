@@ -5,37 +5,20 @@
 
 #include "spall.h"
 
-#ifndef SHADER_DIRECTORY
-#define SHADER_DIRECTORY "shaders/"
-#endif
-
-#if defined(_WIN32)
-#define WINDOWS_LEAN_AND_MEAN
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-bool GetLastWriteTime(const char *fileName, uint64_t *writeTime)
-{
-    bool ok = false;
-    WIN32_FILE_ATTRIBUTE_DATA data;
-    if(GetFileAttributesEx(fileName, GetFileExInfoStandard, &data) &&
-        (uint64_t)data.nFileSizeHigh + (uint64_t)data.nFileSizeLow > 0)
-    {
-        *writeTime = *(uint64_t*)&data.ftLastWriteTime;
-        ok = true;
-    }
-    return ok;
-}
 #else
 #include <sys/stat.h>
-bool GetLastWriteTime(const char *fileName, uint64_t *writeTime)
-{
-    struct stat attr;
-    bool ok = false;
-    if(!stat(fileName, &attr) && attr.st_size > 0) {
-        ok = true;
-        *writeTime = *(uint64_t*)&attr.st_mtim;
-    }
-    return ok;
-}
+#endif
+
+#ifndef VICLIB_IMPLEMENTATION
+# define VICLIB_IMPLEMENTATION
+#endif
+#include "viclib.h"
+
+#ifndef SHADER_DIRECTORY
+# define SHADER_DIRECTORY "shaders/"
 #endif
 
 #ifndef DLL_EXPORT
