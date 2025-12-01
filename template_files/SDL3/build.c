@@ -31,12 +31,12 @@ int main(int argc, char **argv)
     VL_ccWarnings(&cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
 
-#if defined(_MSC_VER)
-    // link flags
-    cmd_Append(&cmd, "/link", "-incremental:no", "-opt:ref", "/subsystem:console");
-#endif
 #if defined(_WIN32)
     VL_ccLibpath(&cmd, "../lib");
+#endif
+#if defined(_MSC_VER)
+    // link flags
+    cmd_Append(&cmd, "-incremental:no", "-opt:ref", "/subsystem:console");
 #endif
     VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 

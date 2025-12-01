@@ -1240,7 +1240,7 @@ ARENAPROC void ArenaEndScratch(scratch_arena Scratch, bool ZeroMem)
 #if defined(_WINBASE_)
 VLIBPROC bool VL_SetCurrentDir(const char *path)
 {
-    return SetCurrentDirectory(path);
+    return (bool)SetCurrentDirectory(path);
 }
 #elif defined(_UNISTD_H_)
 VLIBPROC bool VL_SetCurrentDir(const char *path)

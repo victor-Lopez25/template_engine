@@ -177,7 +177,7 @@ bool TestTemplate(vl_cmd *cmd, Template chosen)
 #if defined(_WIN32)
             X("gcc", "build.c", "-o", "build.exe", "-Wall", "-Wextra", "-Werror"),
             X("clang", "build.c", "-o", "build.exe", "-Wall", "-Wextra", "-Werror"),
-            X("cl", "build.c", "/nologo", "-FC", "-GR-", "-EHa", "-W4", "-WX"),
+            X("cl", "build.c", "/nologo", "-FC", "-GR-", "-EHa", "-W4", "-WX", "-D_CRT_SECURE_NO_WARNINGS"),
 #else
             X("cc", "build.c", "-o", "build", "-Wall", "-Wextra", "-Werror"),
 #endif
