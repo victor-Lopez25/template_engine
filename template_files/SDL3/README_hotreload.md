@@ -1,25 +1,25 @@
 ## SDL3 hotreload template
 
-All you need to build this template is run a compiler on nob.c:
+All you need to build this template is run a compiler on build.c:
 
 ### Step 1
 If on linux/mac:
 ```bash
-cc nob.c -o nob
+cc build.c -o build
 ```
 
 If on windows:
 
-GCC: `gcc nob.c -o nob.exe`
+GCC: `gcc build.c -o build.exe`
 
-clang: `clang nob.c -o nob.exe`
+clang: `clang build.c -o build.exe`
 
-msvc: `cl nob.c -nologo`
+msvc: `cl build.c -nologo`
 
 ### Step 2
-Then run `nob(.exe)` in the same folder and it'll recompile itself if any changes were made to it. It'll also compile the template and run it if "norun" isn't specified.
+Then run `build(.exe)` in the same folder and it'll recompile itself if any changes were made to it. It'll also compile the template and run it if "norun" isn't specified.
 
-If for any reason you want to not hot reload, you can run `nob(.exe) nohotreload` and it'll #include app.c instead of linking dynamically to it. Why? You might want this for release builds.
+If for any reason you want to not hot reload, you can run `build(.exe) nohotreload` and it'll #include app.c instead of linking dynamically to it. Why? You might want this for release builds.
 
 ## Dependencies
 

@@ -22,9 +22,9 @@ cc main.c -o template_engine
 mkdir template
 cd template
 ../template_engine SDL-hotreload
-# after compiling nob.c once, you can run nob and it'll compile itself if needed
-cc nob.c -o nob
-nob
+# after compiling build.c once, you can run build and it'll compile itself if needed
+cc build.c -o build
+build
 ```
 if on windows, add '.exe' to executables and use any c compiler, 'gcc', 'clang', or 'cl' instead of 'cc'
 
