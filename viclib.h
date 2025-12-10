@@ -1,6 +1,6 @@
 /* date = December 29th 2024 10:12 pm
 --Author: Víctor López Cortés
---version: 1.5.1
+--version: 1.5.5
 --Usage:
 Defines: To have any of these take effect, you must define them _before_ including this file
  - VICLIB_IMPLEMENTATION: If you want to have the implementation (only in one file)
@@ -117,15 +117,39 @@ SOFTWARE.
 #if defined(_UNISTD_H_) && defined(_SYS_STAT_H_)
 # define VL_FILE_LINUX
 #endif
-#if defined(_STDLIB_H_) || defined(_INC_STDLIB)
+#if !defined(VL_INC_STDLIB_H) && (defined(_STDLIB_H_) || defined(_STDLIB_H) || defined(_INC_STDLIB))
 # define VL_INC_STDLIB_H
 #endif
-#if defined(_STDIO_H_) || defined(_INC_STDIO)
+#if !defined(VL_INC_STDIO_H) && (defined(_STDIO_H_) || defined(_STDIO_H) || defined(_INC_STDIO))
 # define VL_INC_STDIO_H
 #endif
-#if defined(_STRING_H_) || defined(_INC_STRING)
+#if !defined(VL_INC_STRING_H) && (defined(_STRING_H_) || defined(_INC_STRING))
 # define VL_INC_STRING_H
 #endif
+
+#if !defined(VICLIB_NO_PLATFORM)
+#if OS_WINDOWS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#elif OS_LINUX
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#elif OS_MAC // I think it works with the same includes as linux for now...?
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#else
+#error Unsupported OS
+#endif // OS
+#endif // !defined(VICLIB_NO_PLATFORM)
 
 /* DebugBreakpoint for different platforms.
 Implementation by SDL3 (sdl wiki says SDL2 also had this but code says since SDL3.1.3) */
@@ -197,6 +221,7 @@ extern void __cdecl __debugbreak(void);
 #define fallthrough
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -211,12 +236,6 @@ typedef int64_t  s64;
 typedef uint32_t b32;
 typedef float    f32;
 typedef double   f64;
-
-#ifndef bool
-typedef uint8_t  bool;
-#define true 1
-#define false 0
-#endif
 
 // TODO: Print for different platforms
 
@@ -266,8 +285,10 @@ thread_local u32 ErrorNumber = 0;
  * string_view_array must have count and items attributes
  */
 #define LinearSearch(arr, item, equal) \
-    for(size_t i = 0; i < (arr)->count; i++) { \
-        if(equal((item), (arr)->items[i])) { found = true; break; } \
+    for(size_t glue(i, glue(_, __LINE__)) = 0; \
+        glue(i, glue(_, __LINE__)) < (arr)->count; \
+        glue(i, glue(_, __LINE__))++) { \
+        if(equal((item), (arr)->items[glue(i, glue(_, __LINE__))])) { found = true; break; } \
     }
 
 ////////////////////////////////
@@ -327,6 +348,7 @@ VIEWPROC bool view_ContainsCharacter(view v, char c);
 #define view_EndWith view_EndsWith /* in case of singular/plural annoyance */
 VIEWPROC bool view_EndsWith(view v, view end);
 VIEWPROC view view_ChopByDelim(view *v, char delim);
+VIEWPROC view view_ChopByLine(view *v); // '\n' or "\r\n"
 VIEWPROC view view_ChopByAnyDelim(view *v, view delims, char *delimiter); // checks for any character in Delims, stores found delimiter in Delimiter
 VIEWPROC view view_ChopByView(view *v, view delim); // full view is the delim
 VIEWPROC view view_ChopLeft(view *v, size_t n);
@@ -336,8 +358,8 @@ VIEWPROC view view_TrimRight(view v);
 VIEWPROC view view_Trim(view v);
 
 #define view_IterateLines(src, idxName, lineName) \
-    view lineName = view_ChopByDelim((src), '\n'); \
-    for(size_t idxName = 0; (src)->count > 0 || lineName.count > 0; lineName = view_ChopByDelim((src), '\n'), idxName++)
+    view lineName = view_ChopByLine(src); \
+    for(size_t idxName = 0; (src)->count > 0 || lineName.count > 0; lineName = view_ChopByLine(src), idxName++)
 
 #define view_IterateSpaces(src, idxName, wordName) \
     view wordName = view_ChopByAnyDelim((src), VIEW_STATIC(" \n\t\v\f\r"), 0); \
@@ -367,26 +389,26 @@ typedef struct {
 (code_location){VIEW_STATIC(__FILE__), __LINE__, __COLUMN__, VIEW_STATIC(__PROC__)}
 // odin style, unix style would be :%d:%d
 // prefer LOC_STR to fmt + arg if possible
-#define LOC_UNIX_STR __FILE__":"stringify(__LINE__)":"stringify(__COLUMN__)
-#define LOC_MSVC_STR __FILE__"("stringify(__LINE__)")"
-#define LOC_STR __FILE__"("stringify(__LINE__)":"stringify(__COLUMN__)")"
+#define LOC_UNIX_STR __FILE__":" stringify(__LINE__)":" stringify(__COLUMN__)
+#define LOC_MSVC_STR __FILE__"(" stringify(__LINE__)")"
+#define LOC_STR __FILE__"(" stringify(__LINE__)":" stringify(__COLUMN__)")"
 #define LOC_FMT VIEW_FMT"(%d:%d)"
 #define LOC_ARG(loc) VIEW_ARG((loc).file), (loc).line, (loc.column)
 
 ////////////////////////////////
 
 typedef struct {
-    size_t Size;
-    u8 *Base;
-    size_t Used;
+    size_t size;
+    u8 *base;
+    size_t used;
 
-    s32 ScratchCount;
-    s32 SplitCount;
+    s32 scratchCount;
+    s32 splitCount;
 } memory_arena;
 
 typedef struct {
     memory_arena *Arena;
-    size_t StartMemOffset;
+    size_t startMemOffset;
 } scratch_arena;
 
 #ifndef ARENAPROC
@@ -414,7 +436,10 @@ struct ArenaSplit_opts {
 #define ArenaPushSize(arena, size, ...) ArenaPushSize_Opt((struct ArenaPushSize_opts){.Arena = (arena), .RequestSize = (size), __VA_ARGS__})
 #define PushStruct(arena, type, ...) ArenaPushSize_Opt((struct ArenaPushSize_opts){.Arena = (arena), .RequestSize = sizeof(type), __VA_ARGS__})
 #define PushArray(arena, count, type, ...) ArenaPushSize_Opt((struct ArenaPushSize_opts){.Arena = (arena), .RequestSize = (count)*sizeof(type), __VA_ARGS__})
-#define ArenaClear(arena, ZeroMem) if(ZeroMem) {mem_zero((arena)->Base, (arena)->Size);} (arena)->Used = 0
+#define ArenaClear(arena, ZeroMem) do{ \
+        if(ZeroMem) { mem_zero((arena)->base, (arena)->size); } \
+        (arena)->used = 0; \
+    } while(0)
 ARENAPROC char *Arena_strndup(memory_arena *Arena, const char *s, size_t n);
 // s MUST be null terminated
 ARENAPROC char *Arena_strdup(memory_arena *Arena, const char *s);
@@ -447,34 +472,44 @@ ARENAPROC void ArenaRejoinMultiple_Impl(memory_arena *Arena, memory_arena **Spli
 # define temp_alloc(size, ...) ArenaPushSize_Opt((struct ArenaPushSize_opts){.Arena = &ArenaTemp, .RequestSize = (size), __VA_ARGS__})
 # define temp_strdup(s) Arena_strdup(&ArenaTemp, s)
 # define temp_strndup(s, n) Arena_strndup(&ArenaTemp, s, n)
-# define temp_save() ArenaTemp.Used
-# define temp_rewind(checkpoint) ArenaTemp.Used = checkpoint;
-
+# define temp_save() ArenaTemp.used
+# define temp_rewind(checkpoint) ArenaTemp.used = checkpoint;
 
 #endif
 
 ////////////////////////////////
 
 #ifdef RADDBG_MARKUP_H
-#if COMPILER_GCC || COMPILER_CLANG
-// temporary solution
-PRAGMA(GCC diagnostic push)
-PRAGMA(GCC diagnostic ignored "-Wattributes")
-#endif
-raddbg_type_view(view, array($.Data, $.Len));
+#if COMPILER_CL
+raddbg_type_view(view, array($.items, $.count));
+
 #if defined(SDL_h_)
 raddbg_type_view(SDL_Surface, $.format == SDL_PixelFormat.SDL_PIXELFORMAT_RGBA32 ? 
     bitmap($.pixels, $.w, $.h, RGBA32) : $);
 #endif
-#if COMPILER_GCC || COMPILER_CLANG
-RESTORE_WARNINGS
-#endif
-
+#endif // COMPILER_CL
 #endif // RADDBG_MARKUP_H
 
 ////////////////////////////////
 
-#if !defined(VICLIB_NO_FILE_IO)
+struct vl_globalcontext {
+    bool initted; // called VL_Init()
+    s64 initTime;
+#if !defined(VICLIB_NO_PLATFORM)
+#if OS_WINDOWS
+    LARGE_INTEGER performanceFrequency;
+#else
+
+#endif
+#endif // !defined(VICLIB_NO_PLATFORM)
+};
+
+extern struct vl_globalcontext VL_globalContext;
+
+VLIBPROC bool VL_Init(void);
+
+
+#if !defined(VICLIB_NO_PLATFORM)
 
 #define ERROR_READ_UNKNOWN 1
 #define ERROR_READ_FILE_NOT_FOUND 2
@@ -489,11 +524,8 @@ RESTORE_WARNINGS
 #define READ_ENTIRE_FILE_MAX 0xFFFFFFFF
 #endif
 
-#if defined(_WINBASE_) || defined(_UNISTD_H_)
 VLIBPROC bool VL_SetCurrentDir(const char *path);
-#endif
 
-#if defined(_APISETFILE_) || defined(VL_FILE_LINUX)
 typedef enum {
     VL_FILE_INVALID = -1,
     VL_FILE_REGULAR = 0,
@@ -503,36 +535,18 @@ typedef enum {
 } file_type;
 VLIBPROC bool GetLastWriteTime(const char *file, u64 *WriteTime);
 VLIBPROC file_type VL_GetFileType(const char *path);
-#else
-#define GetLastWriteTime(file, writeTime) \
-AssertMsgAlways(false, "To use GetLastWriteTime you must:\n" \
-    " - include windows.h or fileapi.h (windows api)\n" \
-    " - inlcude sys/stat.h (linux)")
-#define VL_GetFileType(file) \
-AssertMsgAlways(false, "To use GetLastWriteTime you must:\n" \
-    " - include windows.h or fileapi.h (windows api)\n" \
-    " - inlcude sys/stat.h (linux)")
-#endif
 
 #define VL_NANOS_PER_SEC 1000000000
-#if defined(_PROFILEAPI_H_) || (OS_LINUX && defined(_LINUX_TIME_H))
-// Gets nanoseconds since first time this was called
+// Gets nanoseconds since the time VL_Init() was called, 
+// if it wasn't called, it will get nanoseconds since unspecified epoch
 VLIBPROC u64 VL_GetNanos(void);
-#else
-#define VL_GetNanos() \
-AssertMsgAlways(false, "To use VL_GetNanos you must:\n" \
-    " - include windows.h or profileapi.h (windows api)\n" \
-    " - include time.h (linux api)")
-#endif
 
-#if defined(_APISETFILE_) || defined(VL_INC_STDIO_H) || defined(VL_FILE_LINUX)
+#if !defined(VICLIB_NO_FILE_IO)
 
 typedef struct {
-#if defined(_APISETFILE_)
+#if OS_WINDOWS
     HANDLE File;
-#elif defined(VL_INC_STDIO_H)
-    FILE *File;
-#elif defined(VL_FILE_LINUX)
+#elif OS_LINUX || OS_MAC
     int fd;
     bool didFirstIteration; // Need because fd could be 0 (stdin)
 #endif
@@ -541,36 +555,16 @@ typedef struct {
     size_t RemainingFileSize;
 } file_chunk;
 
-
 VLIBPROC bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize);
+
+VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size);
 VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size);
 
-#if (defined(_APISETFILE_) && defined(_MEMORYAPI_H_)) || (defined(VL_INC_STDIO_H) && defined(VL_INC_STDLIB_H)) || (defined(VL_FILE_LINUX) && defined(_SYS_MMAN_H))
-char *ReadEntireFile(char *File, size_t *Size);
-#endif
-
-#else
-
-#define ReadEntireFile(File, Size) (void)File; (void)Size; \
-AssertMsgAlways(false, "To use 'ReadEntireFile' you must\n:" \
-" - include both stdlib.h and stdio.h (stdlib)\n" \
-" - either windows.h or fileapi.h (windows api)\n" \
-" - include both unistd.h, sys/stat.h and sys/mman.h (linux)")
-#define ReadFileChunk(Chunk, File, ChunkSize) /* (void)Chunk; */\
-AssertMsgAlways(false, "To use 'ReadFileChunk' you must\n:" \
-" - include stdio.h (stdlib)\n" \
-" - either windows.h or fileapi.h (windows api)\n" \
-" - include unistd.h, sys/stat.h (linux)")
-#define WriteEntireFile(File, Data, Size) \
-AssertMsgAlways(false, "To use 'ReadFileChunk' you must\n:" \
-" - include stdio.h (stdlib)\n" \
-" - either windows.h or fileapi.h (windows api)\n" \
-" - include unistd.h, sys/stat.h (linux)")
-
-#endif
 #endif // !defined(VICLIB_NO_FILE_IO)
+#endif // !defined(VICLIB_NO_PLATFORM)
 
-#ifndef VICLIB_NO_SORT
+// TODO(vic): I think the sort doesn't work 100% of the time? test this
+#if !defined(VICLIB_NO_SORT)
 bool int_less_than(const void *A, const void *B);
 
 #define VL_Swap(A,B) temp = (A); (A) = (B); (B) = temp
@@ -620,7 +614,8 @@ VIEWPROC view view_FromCstr(const char *cstr)
 
 VIEWPROC view view_Slice(view a, size_t start, size_t end)
 {
-    AssertMsg(start <= end, "Start must be smaller or equal to End");
+    AssertMsg(start <= end, "start must be smaller or equal to end");
+    AssertMsg(end <= a.count, "end must be less or equal to the source view count");
     return view_FromParts(a.items + start, end - start);
 }
 
@@ -679,7 +674,8 @@ VIEWPROC const char *view_Contains(view haystack, view needle)
     // NOTE: wiki: https://en.wikipedia.org/wiki/Two-way_string-matching_algorithm
     for(size_t i = 0; i < haystack.count - needle.count; i++)
     {
-        if(mem_compare(haystack.items + i, needle.items, needle.count) == 0) return haystack.items + i;
+        if(mem_compare(haystack.items + i, needle.items, needle.count) == 0)
+            return haystack.items + i;
     }
     return 0;
 }
@@ -708,6 +704,30 @@ VIEWPROC view view_ChopByDelim(view *v, char delim)
     if(i < v->count) {
         v->count -= i + 1;
         v->items += i + 1;
+    }
+    else {
+        v->count -= i;
+        v->items += i;
+    }
+
+    return Result;
+}
+
+VIEWPROC view view_ChopByLine(view *v)
+{
+    size_t moveLen = 1;
+    size_t i = 0;
+    for(;i < v->count && v->items[i] != '\n';) i += 1;
+    if(v->items[i-1] == '\r') {
+        moveLen = 2;
+        i--;
+    }
+
+    view Result = view_FromParts((const char*)v->items, i);
+
+    if(i < v->count) {
+        v->count -= i + moveLen;
+        v->items += i + moveLen;
     }
     else {
         v->count -= i;
@@ -1002,16 +1022,16 @@ int view_ParseF64(view v, f64 *result, view *remaining)
 
 ////////////////////////////////
 
-#if !defined(VL_INC_STRING_H)
-#define VCL_ALIGN (sizeof(size_t)-1)
+#if !defined(VL_INC_STRING_H) && !defined(SDL_h_)
+#define VICLIB_MEMCPY_ALIGN (sizeof(size_t)-1)
 VLIBPROC void mem_copy_non_overlapping(void *dst, const void *src, size_t len)
 {
     u8 *d = (u8*)dst;
     const u8 *s = (const u8*)src;
-    if(((uintptr_t)d & VCL_ALIGN) != ((uintptr_t)s & VCL_ALIGN))
+    if(((uintptr_t)d & VICLIB_MEMCPY_ALIGN) != ((uintptr_t)s & VICLIB_MEMCPY_ALIGN))
         goto misaligned;
 
-    for(; ((uintptr_t)d & VCL_ALIGN) && len != 0; len--) *d++ = *s++;
+    for(; ((uintptr_t)d & VICLIB_MEMCPY_ALIGN) && len != 0; len--) *d++ = *s++;
     if(len != 0) {
         size_t *wideDst = (size_t*)d;
         const size_t *wideSrc = (const size_t*)s;
@@ -1023,7 +1043,7 @@ misaligned:
         for(; len != 0; len--) *d++ = *s++;
     }
 }
-#undef VCL_ALIGN
+#undef VICLIB_MEMCPY_ALIGN
 
 VLIBPROC void mem_copy(void *dst, const void *src, size_t len)
 {
@@ -1102,20 +1122,20 @@ VLIBPROC int mem_compare(const void *str1, const void *str2, size_t count)
     }
     return 0;
 }
-#endif // !defined(VL_INC_STRING_H)
+#endif // !defined(VL_INC_STRING_H) && !defined(SDL_h_)
 
 ////////////////////////////////
 
-#ifndef VICLIB_NO_TEMP_ARENA
+#if !defined(VICLIB_NO_TEMP_ARENA)
 # ifndef VICLIB_TEMP_SIZE
 #  define VICLIB_TEMP_SIZE (4*1024*1024)
 # endif // !defined(VICLIB_TEMP_SIZE)
 static u8 ViclibTempMem[VICLIB_TEMP_SIZE] = {0};
 memory_arena ArenaTemp = {
-    .Size = VICLIB_TEMP_SIZE,
-    .Base = ViclibTempMem,
-    .Used = 0,
-    .ScratchCount = 0,
+    .size = VICLIB_TEMP_SIZE,
+    .base = ViclibTempMem,
+    .used = 0,
+    .scratchCount = 0,
 };
 #endif // !defined(VICLIB_NO_TEMP_ARENA)
 
@@ -1135,27 +1155,27 @@ ARENAPROC char *Arena_strdup(memory_arena *Arena, const char *s)
 
 ARENAPROC void ArenaInit(memory_arena *Arena, size_t Size, void *Base)
 {
-    Arena->Used = 0;
-    Arena->Size = Size;
-    Arena->Base = (u8*)Base;
-    Arena->ScratchCount = 0;
+    Arena->used = 0;
+    Arena->size = Size;
+    Arena->base = (u8*)Base;
+    Arena->scratchCount = 0;
 }
 
 ARENAPROC size_t ArenaGetAlignmentOffset(memory_arena *Arena, size_t Alignment)
 {
-    size_t AlignOffset = 0;
-    size_t CurrentMemLoc = (size_t)Arena->Base + Arena->Used;
-    size_t AlignMask = Alignment - 1;
-    if(CurrentMemLoc & AlignMask) {
-        AlignOffset = Alignment - (CurrentMemLoc & AlignMask);
+    size_t alignOffset = 0;
+    size_t currentMemLoc = (size_t)Arena->base + Arena->used;
+    size_t alignMask = Alignment - 1;
+    if(currentMemLoc & alignMask) {
+        alignOffset = Alignment - (currentMemLoc & alignMask);
     }
-    return AlignOffset;
+    return alignOffset;
 }
 
 ARENAPROC size_t ArenaGetRemaining_Opt(struct ArenaGetRemaining_opts opt)
 {
     if(opt.Alignment < 1) opt.Alignment = 4;
-    size_t Result = opt.Arena->Size - (opt.Arena->Used + ArenaGetAlignmentOffset(opt.Arena, opt.Alignment));
+    size_t Result = opt.Arena->size - (opt.Arena->used + ArenaGetAlignmentOffset(opt.Arena, opt.Alignment));
     return Result;
 }
 
@@ -1163,96 +1183,133 @@ ARENAPROC void *ArenaPushSize_Opt(struct ArenaPushSize_opts opt)
 {
     if(opt.Alignment < 1) opt.Alignment = 4;
     size_t Size = opt.RequestSize;
-    size_t AlignOffset = ArenaGetAlignmentOffset(opt.Arena, opt.Alignment);
-    Size += AlignOffset;
+    size_t alignOffset = ArenaGetAlignmentOffset(opt.Arena, opt.Alignment);
+    Size += alignOffset;
 
-    AssertMsg((opt.Arena->Used + Size) <= opt.Arena->Size, "Assert Fail: Full arena size reached");
-    void *Mem = opt.Arena->Base + opt.Arena->Used + AlignOffset;
-    opt.Arena->Used += Size;
+    AssertMsg((opt.Arena->used + Size) <= opt.Arena->size, "Assert Fail: Full arena size reached");
+    void *Mem = opt.Arena->base + opt.Arena->used + alignOffset;
+    opt.Arena->used += Size;
 
     return Mem;
 }
 
 ARENAPROC void ArenaSplit_Opt(struct ArenaSplit_opts opt)
 {
-    AssertMsg(opt.Arena->Size > opt.SplitSize, "Need more memory in arena to split to requested size");
+    AssertMsg(opt.Arena->size > opt.SplitSize, "Need more memory in arena to split to requested size");
     if(opt.SplitSize == 0) opt.SplitSize = ArenaGetRemaining(opt.Arena, .Alignment = 1) / 2;
 
-    opt.Arena->SplitCount++;
-    opt.Arena->Size = opt.Arena->Size - opt.SplitSize;
+    opt.Arena->splitCount++;
+    opt.Arena->size = opt.Arena->size - opt.SplitSize;
 
-    opt.SplitArena->Size = opt.SplitSize;
-    opt.SplitArena->Base = opt.Arena->Base + opt.Arena->Size;
-    opt.SplitArena->Used = 0;
-    opt.SplitArena->ScratchCount = 0;
-    opt.SplitArena->SplitCount = 0;
+    opt.SplitArena->size = opt.SplitSize;
+    opt.SplitArena->base = opt.Arena->base + opt.Arena->size;
+    opt.SplitArena->used = 0;
+    opt.SplitArena->scratchCount = 0;
+    opt.SplitArena->splitCount = 0;
     ArenaPushSize(opt.SplitArena, 0, .Alignment = 4); // 'leak' up to 4 bytes here to keep the memory aligned
 }
 
 ARENAPROC void ArenaRejoin(memory_arena *Arena, memory_arena *SplitArena)
 {
-    AssertMsg(Arena->SplitCount > 0, "This split arena doesn't belong to the arena");
-    AssertMsg(Arena->Base + Arena->Size == SplitArena->Base, "Split arenas must be rejoined as a stack; first in last out");
-    AssertMsg(SplitArena->ScratchCount == 0, "Rejoining a split arena without Ending all its scratch arenas will cause conflicts with the original arena");
-    AssertMsg(SplitArena->SplitCount == 0, "Rejoining a split arena without rejoining its split arenas will cause memory leaks");
-    SplitArena->Base = 0;
-    SplitArena->Used = 0;
-    Arena->Size += SplitArena->Size;
-    Arena->SplitCount--;
+    AssertMsg(Arena->splitCount > 0, "This split arena doesn't belong to the arena");
+    AssertMsg(Arena->base + Arena->size == SplitArena->base, "Split arenas must be rejoined as a stack; first in last out");
+    AssertMsg(SplitArena->scratchCount == 0, "Rejoining a split arena without Ending all its scratch arenas will cause conflicts with the original arena");
+    AssertMsg(SplitArena->splitCount == 0, "Rejoining a split arena without rejoining its split arenas will cause memory leaks");
+    SplitArena->base = 0;
+    SplitArena->used = 0;
+    Arena->size += SplitArena->size;
+    Arena->splitCount--;
 }
 
 ARENAPROC void ArenaSplitMultiple_Impl(memory_arena *Arena, memory_arena **SplitArenas, size_t SplitArenaCount)
 {
-    size_t SplitSize = ArenaGetRemaining(Arena, .Alignment = 1) / (SplitArenaCount + 1);
-    for(size_t SplitIdx = 0; SplitIdx < SplitArenaCount; SplitIdx++) ArenaSplit(Arena, SplitArenas[SplitIdx], SplitSize);
+    size_t splitSize = ArenaGetRemaining(Arena, .Alignment = 1) / (SplitArenaCount + 1);
+    for(size_t splitIdx = 0; splitIdx < SplitArenaCount; splitIdx++) ArenaSplit(Arena, SplitArenas[splitIdx], splitSize);
 }
 
 ARENAPROC void ArenaRejoinMultiple_Impl(memory_arena *Arena, memory_arena **SplitArenas, size_t SplitArenaCount)
 {
-    for(int64_t SplitIdx = (int64_t)SplitArenaCount - 1; SplitIdx >= 0; SplitIdx--) ArenaRejoin(Arena, SplitArenas[SplitIdx]);
+    for(int64_t splitIdx = (int64_t)SplitArenaCount - 1; splitIdx >= 0; splitIdx--) ArenaRejoin(Arena, SplitArenas[splitIdx]);
 }
 
 ARENAPROC scratch_arena ArenaBeginScratch(memory_arena *Arena)
 {
-    scratch_arena Scratch = {
+    scratch_arena scratch = {
         .Arena = Arena,
-        .StartMemOffset = Arena->Used,
+        .startMemOffset = Arena->used,
     };
-    Arena->ScratchCount += 1;
+    Arena->scratchCount += 1;
 
-    return Scratch;
+    return scratch;
 }
 
 ARENAPROC void ArenaEndScratch(scratch_arena Scratch, bool ZeroMem)
 {
     memory_arena *Arena = Scratch.Arena;
-    Assert(Arena->Used >= Scratch.StartMemOffset);
+    Assert(Arena->used >= Scratch.startMemOffset);
     if(ZeroMem) {
-        mem_zero(Arena->Base + Scratch.StartMemOffset, Arena->Used - Scratch.StartMemOffset);
+        mem_zero(Arena->base + Scratch.startMemOffset, Arena->used - Scratch.startMemOffset);
     }
-    Arena->Used = Scratch.StartMemOffset;
-    Assert(Arena->ScratchCount > 0);
-    Arena->ScratchCount -= 1;
+    Arena->used = Scratch.startMemOffset;
+    Assert(Arena->scratchCount > 0);
+    Arena->scratchCount -= 1;
 }
 
 ////////////////////////////////
 
-#if defined(_WINBASE_)
-VLIBPROC bool VL_SetCurrentDir(const char *path)
+struct vl_globalcontext VL_globalContext = {0};
+
+VLIBPROC bool VL_Init(void)
 {
-    return (bool)SetCurrentDirectory(path);
-}
-#elif defined(_UNISTD_H_)
-VLIBPROC bool VL_SetCurrentDir(const char *path)
-{
-    return chdir(path) >= 0;
-}
+    if(VL_globalContext.initted) {
+        return false; // Only do init once
+    }
+    VL_globalContext.initted = true;
+#if !defined(VICLIB_NO_PLATFORM)
+#if OS_WINDOWS
+    LARGE_INTEGER time;
+#ifdef __cplusplus
+    VL_globalContext.performanceFrequency = {0};
+#else
+    VL_globalContext.performanceFrequency = (LARGE_INTEGER){0};
 #endif
 
-#if defined(_APISETFILE_) // windows fileapi.h included
+    QueryPerformanceFrequency(&VL_globalContext.performanceFrequency);
+    QueryPerformanceCounter(&time);
+    u64 secs = time.QuadPart / VL_globalContext.performanceFrequency.QuadPart;
+    u64 nanos = (time.QuadPart % VL_globalContext.performanceFrequency.QuadPart) *
+        VL_NANOS_PER_SEC / VL_globalContext.performanceFrequency.QuadPart;
+    VL_globalContext.initTime = VL_NANOS_PER_SEC * secs + nanos;
+#elif OS_LINUX || OS_MAC
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    VL_globalContext.initTime = VL_NANOS_PER_SEC * ts.tv_sec + ts.tv_nsec;
+#else
+#error Unsupported
+#endif // OS
+#endif // !defined(VICLIB_NO_PLATFORM)
+
+    return true;
+}
+
+#if !defined(VICLIB_NO_PLATFORM)
+
+VLIBPROC bool VL_SetCurrentDir(const char *path)
+{
+#if OS_WINDOWS
+    return (bool)SetCurrentDirectory(path);
+#elif OS_LINUX || OS_MAC
+    return chdir(path) >= 0;
+#else
+#error Unsupported
+#endif
+}
+
 VLIBPROC bool GetLastWriteTime(const char *file, u64 *WriteTime)
 {
     bool ok = false;
+
+#if OS_WINDOWS
     WIN32_FILE_ATTRIBUTE_DATA data;
     if(GetFileAttributesEx(file, GetFileExInfoStandard, &data) &&
         (uint64_t)data.nFileSizeHigh + (uint64_t)data.nFileSizeLow > 0)
@@ -1260,90 +1317,68 @@ VLIBPROC bool GetLastWriteTime(const char *file, u64 *WriteTime)
         *WriteTime = *(uint64_t*)&data.ftLastWriteTime;
         ok = true;
     }
+#elif OS_LINUX || OS_MAC
+    struct stat attr;
+    if(!stat(file, &attr) && attr.st_size > 0) {
+        ok = true;
+        *WriteTime = *(uint64_t*)&attr.st_mtim;
+    }
+#else
+#error Unsupported
+#endif
+
     return ok;
 }
 
 VLIBPROC file_type VL_GetFileType(const char *path)
 {
+#if OS_WINDOWS
     DWORD attr = GetFileAttributesA(path);
     if(attr == INVALID_FILE_ATTRIBUTES) return VL_FILE_INVALID;
     if(attr & FILE_ATTRIBUTE_DIRECTORY) return VL_FILE_DIRECTORY;
     // TODO: detect symlinks on Windows (whatever that means on Windows anyway)
     return VL_FILE_REGULAR;
-}
-#elif defined(_SYS_STAT_H_)
-VLIBPROC bool GetLastWriteTime(const char *file, uint64_t *WriteTime)
-{
-    struct stat attr;
-    bool ok = false;
-    if(!stat(file, &attr) && attr.st_size > 0) {
-        ok = true;
-        *WriteTime = *(uint64_t*)&attr.st_mtim;
-    }
-    return ok;
-}
-
-VLIBPROC file_type VL_GetFileType(const char *path)
-{
+#elif OS_LINUX || OS_MAC
     struct stat statbuf;
     if(lstat(path, &statbuf) < 0) return VL_FILE_INVALID;
     if(S_ISREG(statbuf.st_mode)) return VL_FILE_REGULAR;
     if(S_ISDIR(statbuf.st_mode)) return VL_FILE_DIRECTORY;
     if(S_ISLNK(statbuf.st_mode)) return VL_FILE_SYMLINK;
     return VL_FILE_OTHER;
-}
+#else
+#error Unsupported
 #endif
+}
 
-#if defined(_PROFILEAPI_H_)
 VLIBPROC u64 VL_GetNanos(void)
 {
-    static bool initted = false;
-    static LARGE_INTEGER frequency = {0};
-    static u64 initTime;
-    if(!initted) {
-        QueryPerformanceFrequency(&frequency);
-
-        LARGE_INTEGER time;
-        QueryPerformanceCounter(&time);
-        u64 secs = time.QuadPart / frequency.QuadPart;
-        u64 nanos = (time.QuadPart % frequency.QuadPart) * VL_NANOS_PER_SEC / frequency.QuadPart;
-        initTime = VL_NANOS_PER_SEC * secs + nanos;
-        initted = true;
-    }
+#if OS_WINDOWS
+    AssertMsg(VL_globalContext.performanceFrequency.QuadPart != 0, "Error: You must call VL_Init() before calling VL_GetNanos()");
 
     LARGE_INTEGER time;
     QueryPerformanceCounter(&time);
-    u64 secs = time.QuadPart / frequency.QuadPart;
-    u64 nanos = (time.QuadPart % frequency.QuadPart) * VL_NANOS_PER_SEC / frequency.QuadPart;
-    return (VL_NANOS_PER_SEC * secs + nanos) - initTime;
-}
-#elif OS_LINUX && defined(_LINUX_TIME_H)
-VLIBPROC u64 VL_GetNanos(void)
-{
-    static bool initted = false;
-    static u64 initTime;
-    if(!initted) {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        initTime = VL_NANOS_PER_SEC * ts.tv_sec + ts.tv_nsec;
-    }
-
+    u64 secs = time.QuadPart / VL_globalContext.performanceFrequency.QuadPart;
+    u64 nanos = (time.QuadPart % VL_globalContext.performanceFrequency.QuadPart) * 
+        VL_NANOS_PER_SEC / VL_globalContext.performanceFrequency.QuadPart;
+    return (VL_NANOS_PER_SEC * secs + nanos) - VL_globalContext.initTime;
+#elif OS_LINUX || OS_MAC
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (VL_NANOS_PER_SEC * ts.tv_sec + ts.tv_nsec) - initTime;
-}
+    return (VL_NANOS_PER_SEC * ts.tv_sec + ts.tv_nsec) - VL_globalContext.initTime;
+#else
+#error Unsupported
 #endif
+}
 
 #if !defined(VICLIB_NO_FILE_IO)
-#if defined(_APISETFILE_) // windows fileapi.h included
 
-#if defined(_MEMORYAPI_H_)
 PUSH_IGNORE_UNINITIALIZED
-char *ReadEntireFile(char *File, size_t *Size)
+VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
 {
+#if OS_WINDOWS
     ErrorNumber = 0;
     AssertMsg(Size != 0, "Size parameter must be a valid pointer");
-    char *Result = 0;
+    char *result = 0;
     HANDLE FileHandle = CreateFileA(File, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     bool ok = FileHandle != INVALID_HANDLE_VALUE;
     if(!ok) {
@@ -1372,37 +1407,84 @@ char *ReadEntireFile(char *File, size_t *Size)
     }
     u32 FileSizeU32 = (u32)FileSize.QuadPart;
 
+    size_t arenaMark = Arena->used;
     if(ok) {
-        // TODO: VirtualAlloc or HeapAlloc here?
-        Result = (char*)VirtualAlloc(0, FileSize.QuadPart, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-        ok = Result != 0;
-        if(!ok) ErrorNumber = ERROR_READ_NO_MEM;
+        if(ArenaGetRemaining(Arena) < (size_t)FileSize.QuadPart) {
+            ErrorNumber = ERROR_READ_NO_MEM;
+            ok = false;
+        } else {
+            result = ArenaPushSize(Arena, FileSize.QuadPart);
+        }
     }
 
     if(ok) {
         DWORD BytesRead;
-        if(ReadFile(FileHandle, Result, FileSizeU32, &BytesRead, 0) && (FileSize.QuadPart == BytesRead))
+        if(ReadFile(FileHandle, result, FileSizeU32, &BytesRead, 0) && (FileSize.QuadPart == BytesRead))
         {
             *Size = FileSize.QuadPart;
-        }
-        else {
+        } else {
             ErrorNumber = ERROR_READ_UNKNOWN;
-            VirtualFree((void*)Result, 0, MEM_RELEASE); // NOTE: If I decide to do HeapAlloc above, this should be HeapFree
-            Result = 0;
+            mem_zero(Arena->base + arenaMark, Arena->used - arenaMark);
+            Arena->used = arenaMark;
         }
     }
 
     CloseHandle(FileHandle);
-    return Result;
+#elif OS_LINUX || OS_MAC
+    ErrorNumber = 0;
+    char *result = 0;
+    int fd = open(File, O_RDONLY);
+    if(fd == -1) {
+        if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
+        else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
+        else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+        else if(errno == EBADF || errno == ENOENT)
+            ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
+        else ErrorNumber = ERROR_READ_UNKNOWN;
+        return 0;
+    }
+
+    struct stat stat;
+    if(fstat(fd, &stat) == -1) {
+        ErrorNumber = ERROR_READ_UNKNOWN;
+        close(fd);
+        return 0;
+    }
+
+    size_t arenaMark = Arena->used;
+    if(ArenaGetRemaining(Arena) < (size_t)stat.st_size) {
+        ErrorNumber = ERROR_READ_NO_MEM;
+        close(fd);
+        return 0;
+    } else {
+        result = ArenaPushSize(Arena, (size_t)stat.st_size);
+    }
+
+    ssize_t bytesRead = read(fd, result, stat.st_size);
+    if(bytesRead != stat.st_size) {
+        ErrorNumber = ERROR_READ_UNKNOWN;
+        close(fd);
+        mem_zero(Arena->base + arenaMark, Arena->used - arenaMark);
+        Arena->used = arenaMark;
+        return 0;
+    }
+
+    close(fd);
+
+    if(Size) *Size = stat.st_size;
+#else
+#error Unsupported
+#endif
+    return result;
 }
 RESTORE_WARNINGS
-#endif // defined(_MEMORYAPI_H_) (VirtualAlloc)
 
 bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
 {
     AssertMsg(Chunk->Buffer && Chunk->BufferSize, "Requires a valid buffer and a buffer size");
     ErrorNumber = 0;
 
+#if OS_WINDOWS
     if(!Chunk->File) {
         Chunk->File = CreateFileA(File, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
         if(Chunk->File == INVALID_HANDLE_VALUE) {
@@ -1441,6 +1523,47 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
         return false;
     }
 
+#elif OS_LINUX || OS_LINUX
+    if(!Chunk->didFirstIteration) {
+        Chunk->didFirstIteration = true;
+        Chunk->fd = open(File, O_RDONLY);
+        if(Chunk->fd == -1) {
+            if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
+            else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
+            else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+            else if(errno == EBADF || errno == ENOENT)
+                ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
+            else ErrorNumber = ERROR_READ_UNKNOWN;
+            return false;
+        }
+
+        struct stat stat;
+        if(fstat(Chunk->fd, &stat) == -1) {
+            ErrorNumber = ERROR_READ_UNKNOWN;
+            close(Chunk->fd);
+            return false;
+        }
+
+        Chunk->RemainingFileSize = stat.st_size;
+    } else if(Chunk->RemainingFileSize == 0) {
+        if(Chunk->fd > 2) close(Chunk->fd); // I don't think I should try to close stdin, stdout, stderr?
+        Chunk->didFirstIteration = false;
+        Chunk->fd = 0;
+        return false;
+    }
+
+    size_t OutSize = min(Chunk->RemainingFileSize, (size_t)Chunk->BufferSize);
+
+    if(OutSize == (size_t)read(Chunk->fd, Chunk->Buffer, OutSize)) {
+        *ChunkSize = (u32)OutSize;
+    } else {
+        ErrorNumber = ERROR_READ_UNKNOWN;
+        return false;
+    }
+#else
+#error Unsupported
+#endif
+
     Chunk->RemainingFileSize -= (u32)OutSize;
     return true;
 }
@@ -1448,6 +1571,8 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
 VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size)
 {
     bool result = true;
+
+#if OS_WINDOWS
     HANDLE fhandle = INVALID_HANDLE_VALUE;
 
     fhandle = CreateFileA(File, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
@@ -1481,251 +1606,43 @@ VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size)
 defer:
     if(fhandle != INVALID_HANDLE_VALUE) CloseHandle(fhandle);
     return result;
-}
 
-#elif defined(VL_FILE_LINUX)
-
-#if defined(_SYS_MMAN_H)
-char *ReadEntireFile(char *File, size_t *Size)
-{
-    ErrorNumber = 0;
-    int fd = open(File, O_RDONLY);
+#elif OS_LINUX || OS_MAC
+    int fd = open(File, O_CREAT | O_WRONLY | O_TRUNC);
     if(fd == -1) {
         if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
         else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
         else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+        // this could happen if creating a file in a directory that doesn't exist I think?
         else if(errno == EBADF || errno == ENOENT)
             ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
         else ErrorNumber = ERROR_READ_UNKNOWN;
-        return 0;
+        return false;
     }
 
-    struct stat stat;
-    if(fstat(fd, &stat) == -1) {
-        ErrorNumber = ERROR_READ_UNKNOWN;
-        close(fd);
-        return 0;
+    u8 *fData = (u8*)Data;
+    ssize_t bytesToWriteTotal = (ssize_t)Size;
+    ssize_t bytesWrittenTotal = 0;
+    while(bytesToWriteTotal > bytesWrittenTotal) {
+        ssize_t bytesWritten = write(fd, fData, bytesToWriteTotal - bytesWrittenTotal);
+        if(bytesWritten == -1) {
+            ErrorNumber = ERROR_WRITE_UNKNOWN;
+            VL_ReturnDefer(false);
+        }
+        bytesWrittenTotal += bytesWritten;
+        fData += bytesWritten;
     }
 
-    char *Result = (char*)mmap(0, stat.st_size, PROT_READ | PROT_WRITE, MAP_SHARED);
-    if(Result == MAP_FAILED) {
-        ErrorNumber = ERROR_READ_UNKNOWN;
-        close(fd);
-        return 0;
-    }
-
-    ssize_t bytesRead = read(fd, Result, stat.st_size);
-    if(bytesRead != stat.st_size) {
-        ErrorNumber = ERROR_READ_UNKNOWN;
-        close(fd);
-        return 0;
-    }
-
+defer:
     close(fd);
-
-    if(Size) *Size = stat.st_size;
-
-    return Result;
-}
-#endif // defined(_SYS_MMAN_H)
-
-bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
-{
-    AssertMsg(Chunk->Buffer && Chunk->BufferSize, "Requires a valid buffer and a buffer size");
-    ErrorNumber = 0;
-
-    if(!Chunk->didFirstIteration) {
-        Chunk->didFirstIteration = true;
-        Chunk->fd = open(File, O_RDONLY);
-        if(Chunk->fd == -1) {
-            if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
-            else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
-            else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
-            else if(errno == EBADF || errno == ENOENT)
-                ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-            else ErrorNumber = ERROR_READ_UNKNOWN;
-            return false;
-        }
-
-        struct stat stat;
-        if(fstat(fd, &stat) == -1) {
-            ErrorNumber = ERROR_READ_UNKNOWN;
-            close(Chunk->fd);
-            return false;
-        }
-
-        Chunk->RemainingFileSize = stat.st_size;
-    } else if(Chunk->RemainingFileSize == 0) {
-        if(Chunk->fd > 2) close(Chunk->fd); // I don't think I should try to close stdin, stdout, stderr?
-        Chunk->didFirstIteration = false;
-        Chunk->fd = 0;
-        return false;
-    }
-
-    size_t OutSize = min(Chunk->RemainingFileSize, (size_t)Chunk->BufferSize);
-
-    if(OutSize == read(Chunk->fd, Chunk->Buffer, OutSize)) {
-        *ChunkSize = (u32)OutSize;
-    } else {
-        ErrorNumber = ERROR_READ_UNKNOWN;
-        return false;
-    }
-
-    Chunk->RemainingFileSize -= (u32)OutSize;
-    return true;
-}
-
-// TODO: WriteEntire file for linux
-
-#elif defined(VL_INC_STDIO_H)
-
-#if defined(VL_INC_STDLIB_H)
-PUSH_IGNORE_UNINITIALIZED
-char *ReadEntireFile(char *File, size_t *Size)
-{
-    ErrorNumber = 0;
-    // ERROR_READ_UNKNOWN - fseek, ftell failed
-    // fopen could fail due to many things
-    // TODO: Set ErrorNumber depending on them
-    // ERROR_READ_NO_MEM - malloc failed
-    // ERROR_READ_FILE_TOO_BIG - READ_ENTIRE_FILE_MAX exceeded
-    FILE *f = fopen(File, "rb");
-    bool ok = f != 0;
-    char *result = 0;
-    if(!ok) ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-
-    if(ok) {
-        ok = fseek(f, 0, SEEK_END) >= 0;
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
-    }
-
-    long m;
-    if(ok) {
-        m = ftell(f);
-        ok = (u64)m <= (u64)READ_ENTIRE_FILE_MAX;
-        if(!ok) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
-
-        ok = m >= 0;
-        // ftell() fail
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
-    }
-
-    if(ok) {
-        result = malloc(sizeof(char) * m);
-        ok = result != 0;
-        if(!ok) ErrorNumber = ERROR_READ_NO_MEM;
-    }
-
-    if(ok) {
-        ok = fseek(f, 0, SEEK_SET) >= 0;
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
-    }
-
-    if(ok) {
-        size_t n = fread(result, 1, m, f);
-        ok = n == (size_t)m;
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
-    }
-
-    if(ok) {
-        ok = !ferror(f);
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
-    }
-
-    if(Size) *Size = m;
-
-    if(f) fclose(f);
-    if(!ok && result) {
-        free(result);
-        result = 0;
-    }
-
     return result;
-}
-RESTORE_WARNINGS
-#endif // defined(VL_INC_STDLIB_H)
-
-bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
-{
-    AssertMsg(Chunk->Buffer && Chunk->BufferSize, "Requires a valid buffer and a buffer size");
-    ErrorNumber = 0;
-
-    if(!Chunk->File) {
-        Chunk->File = fopen(File, "rb");
-        if(!Chunk->File) {
-            ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-            return false;
-        }
-
-        if(fseek(Chunk->File, 0, SEEK_END) < 0) {
-            ErrorNumber = ERROR_READ_UNKNOWN;
-            return false;
-        }
-
-        long m = ftell(Chunk->File);
-        if(m < 0) {
-            ErrorNumber = ERROR_READ_UNKNOWN;
-            return false;
-        }
-
-        if(fseek(Chunk->File, 0, SEEK_SET) < 0) {
-            ErrorNumber = ERROR_READ_UNKNOWN;
-            return false;
-        }
-
-        Chunk->RemainingFileSize = m;
-    } else if(Chunk->RemainingFileSize == 0) {
-        // Success
-        fclose(Chunk->File);
-        Chunk->File = 0;
-        return false;
-    }
-    size_t OutSize = min(Chunk->RemainingFileSize, (size_t)Chunk->BufferSize);
-
-    if(OutSize == fread(Chunk->Buffer, 1, (u32)OutSize, Chunk->File))
-    {
-        *ChunkSize = (u32)OutSize;
-    } else {
-        ErrorNumber = ERROR_READ_UNKNOWN;
-        return false;
-    }
-
-    Chunk->RemainingFileSize -= (u32)OutSize;
-    return true;
+#else
+#error Unsupported
+#endif
 }
 
-VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size)
-{
-    const char *buf = 0;
-    FILE *f = fopen(File, "wb");
-    if(f == 0) {
-        ErrorNumber = ERROR_WRITE_UNKNOWN; // TODO: Check errors to see cause
-        return false;
-    }
-
-    //           len
-    //           v
-    // aaaaaaaaaa
-    //     ^
-    //     data
-
-    buf = (const char*)Data;
-    while(Size > 0) {
-        size_t n = fwrite(buf, 1, Size, f);
-        if(ferror(f)) {
-            fclose(f);
-            ErrorNumber = ERROR_WRITE_UNKNOWN; // TODO: Check errors to see cause
-            return false;
-        }
-        Size -= n;
-        buf  += n;
-    }
-
-    return true;
-}
-
-#endif // stdio.h included
 #endif // !defined(VICLIB_NO_FILE_IO)
+#endif // !defined(VICLIB_NO_PLATFORM)
 
 #ifndef VICLIB_NO_SORT
 
@@ -1859,6 +1776,7 @@ void VL_HeapSort(void *Data, size_t Count, size_t ElementSize, bool (*less_than)
         }
     }
 }
+
 #endif // !defined(VICLIB_NO_SORT)
 #endif // VICLIB_IMPLEMENTATION
 #endif //VICLIB_H
