@@ -7,14 +7,6 @@
 #endif
 
 #if defined(_WIN32)
-# define DLL_EXT ".dll"
-#elif __APPLE__
-# define DLL_EXT ".dynlib"
-#else
-# define DLL_EXT ".so"
-#endif
-
-#if defined(_WIN32)
 #include <tlhelp32.h>
 bool ProgramAlreadyRunning(const char *program)
 {
@@ -95,7 +87,7 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 {
     VL_cc(cmd);
     cmd_Append(cmd, "../src/app.c", "-I", "../include");
-    VL_ccOutput(cmd, "app" DLL_EXT);
+    VL_ccOutput(cmd, "app" VL_DLL_EXT);
     VL_ccWarnings(cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(cmd);
 
