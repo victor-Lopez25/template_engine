@@ -188,7 +188,7 @@ int main(int argc, char **argv)
             if(LoadProgramApi(&newApi, version)) {
                 if(api.memorySize() == newApi.memorySize()) {
                     // normal hot reload
-                    da_Append(&oldApis, api);
+                    DaAppend(&oldApis, api);
                     api.deInitPartial(appMemory);
                     memcpy(&api, &newApi, sizeof(ProgramApi));
                     api.initPartial(appMemory);
@@ -228,7 +228,7 @@ endProgram:
     for(size_t apiIdx = 0; apiIdx < oldApis.count; apiIdx++) {
         UnloadApi(&oldApis.items[apiIdx]);
     }
-    da_Free(oldApis);
+    DaFree(oldApis);
 
     return 0;
 }

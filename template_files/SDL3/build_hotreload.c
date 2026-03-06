@@ -86,7 +86,7 @@ bool ProgramAlreadyRunning(const char *program)
 bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 {
     VL_cc(cmd);
-    cmd_Append(cmd, "../src/app.c", "-I", "../include");
+    CmdAppend(cmd, "../src/app.c", "-I", "../include");
     VL_ccOutput(cmd, "app" VL_DLL_EXT);
     VL_ccWarnings(cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(cmd);
@@ -96,9 +96,9 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 #endif
 
 #if defined(_MSC_VER)
-    cmd_Append(cmd, "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
+    CmdAppend(cmd, "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
 #else
-    cmd_Append(cmd, "-shared");
+    CmdAppend(cmd, "-shared");
 #endif
 
     VL_ccLibs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
@@ -151,17 +151,17 @@ int main(int argc, char **argv)
         // Done since we're not going to rerun the program
         if(ProgramAlreadyRunning(EXE_NAME VL_EXE_EXTENSION)) return 0;
         VL_cc(&cmd);
-        cmd_Append(&cmd, "../src/main_hot_reload.c");
+        CmdAppend(&cmd, "../src/main_hot_reload.c");
         VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
         VL_ccWarnings(&cmd);
         if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
 #if defined(_MSC_VER)
-        cmd_Append(&cmd, "/link", "-incremental:no", "-opt:ref");
+        CmdAppend(&cmd, "/link", "-incremental:no", "-opt:ref");
 #endif
         if(!CmdRun(&cmd)) return 1;
     } else {
         VL_cc(&cmd);
-        cmd_Append(&cmd, "../src/main_no_hot_reload.c", "-I", "../include");
+        CmdAppend(&cmd, "../src/main_no_hot_reload.c", "-I", "../include");
         VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
         VL_ccWarnings(&cmd);
         if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
@@ -170,13 +170,13 @@ int main(int argc, char **argv)
         VL_ccLibpath(&cmd, "../lib");
 #endif
 #if defined(_MSC_VER)
-        cmd_Append(&cmd, "-incremental:no", "-opt:ref");
+        CmdAppend(&cmd, "-incremental:no", "-opt:ref");
 #endif
         if(!CmdRun(&cmd)) return 1;
     }
 
     if(shouldrun) {
-        cmd_Append(&cmd, "./" EXE_NAME);
+        CmdAppend(&cmd, "./" EXE_NAME);
         if(!CmdRun(&cmd)) {
             VL_Popd();
             return 1;

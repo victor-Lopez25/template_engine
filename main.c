@@ -91,7 +91,7 @@ void GetInfo(Template t)
         fprintf(stderr, "Missing info for this template, make an issue on github: https://github.com/victor-Lopez25/template_engine/issues\n");
         return;
     }
-    sb_ReadEntireFile(temp_sprintf("%s/template_files/SDL3/README.md", selfPath), &sb);
+    SbReadEntireFile(temp_sprintf("%s/template_files/SDL3/README.md", selfPath), &sb);
     fprintf(stderr, "%.*s\n\n", (int)sb.count, sb.items);
 }
 
@@ -187,9 +187,9 @@ bool TestTemplate(vl_cmd *cmd, Template chosen)
     switch(chosen) {
         case Template_SDL3: {
             for(size_t i = 0; i < ArrayLen(cmdItems); i++) {
-                da_AppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
+                DaAppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
                 if(!CmdRun(cmd)) return false;
-                cmd_Append(cmd, "build", "test");
+                CmdAppend(cmd, "build", "test");
                 if(!CmdRun(cmd)) return false;
             }
         } break;
@@ -197,11 +197,11 @@ bool TestTemplate(vl_cmd *cmd, Template chosen)
         case Template_SDL3_Hotreload:
         case Template_SDL3_GPU_Hotreload: {
             for(size_t i = 0; i < ArrayLen(cmdItems); i++) {
-                da_AppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
+                DaAppendMany(cmd, cmdItems[i].items, cmdItems[i].count);
                 if(!CmdRun(cmd)) return false;
-                cmd_Append(cmd, "build", "test", "hotreload");
+                CmdAppend(cmd, "build", "test", "hotreload");
                 if(!CmdRun(cmd)) return false;
-                cmd_Append(cmd, "build", "test", "nohotreload");
+                CmdAppend(cmd, "build", "test", "nohotreload");
                 if(!CmdRun(cmd)) return false;
             }
         } break;

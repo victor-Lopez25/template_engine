@@ -86,7 +86,7 @@ bool ProgramAlreadyRunning(const char *program)
 bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 {
     VL_cc(cmd);
-    cmd_Append(cmd, "../src/app.c", "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
+    CmdAppend(cmd, "../src/app.c", "-I", "../include", "-DSHADER_DIRECTORY=\"../shaders/\"");
     VL_ccOutput(cmd, "app" VL_DLL_EXT);
     VL_ccWarnings(cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(cmd);
@@ -96,9 +96,9 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 #endif
 
 #if defined(_MSC_VER)
-    cmd_Append(cmd, "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
+    CmdAppend(cmd, "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
 #else
-    cmd_Append(cmd, "-shared");
+    CmdAppend(cmd, "-shared");
 #endif
 
     VL_ccLibs(cmd, "SDL3", "SDL3_ttf", "SDL3_image", "SDL3_shadercross");
@@ -118,11 +118,11 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 
 // NOTE: For glslc
 char *GetShaderstageFromExt(view file) {
-    if(view_EndWith(file, VIEW_STATIC(".vert"))) {
+    if(ViewEndsWith(file, VIEW_STATIC(".vert"))) {
         return "vert"; // 'vertex' is also valid
-    } if(view_EndWith(file, VIEW_STATIC(".frag"))) {
+    } if(ViewEndsWith(file, VIEW_STATIC(".frag"))) {
         return "frag"; // 'fragment' is also valid
-    } if(view_EndWith(file, VIEW_STATIC(".comp"))) {
+    } if(ViewEndsWith(file, VIEW_STATIC(".comp"))) {
         return "comp"; // 'compute' is also valid
     } else return 0; // SDL_gpu doesn't support others If I understand correctly
 }
@@ -130,7 +130,7 @@ char *GetShaderstageFromExt(view file) {
 bool CompileGlslShader(vl_cmd *cmd, view shaderfile)
 {
     // NOTE: To compile glsl shaders, glslc is required
-    view noGlslExt = view_FromParts(shaderfile.items, shaderfile.count - strlen(".glsl"));
+    view noGlslExt = ViewFromParts(shaderfile.items, shaderfile.count - strlen(".glsl"));
     char *output = temp_sprintf(VIEW_FMT".spv", VIEW_ARG(noGlslExt));
     if(VL_NeedsRebuild(output, shaderfile.items) == 1) {
         char *shaderStage = GetShaderstageFromExt(noGlslExt);
@@ -138,7 +138,7 @@ bool CompileGlslShader(vl_cmd *cmd, view shaderfile)
             VL_Log(VL_ERROR, "Invalid extension in shader file referencing shader stage '"VIEW_FMT"'", VIEW_ARG(shaderfile));
             return false;
         }
-        cmd_Append(cmd, "glslc", "-o", output, 
+        CmdAppend(cmd, "glslc", "-o", output, 
             temp_sprintf("-fshader-stage=%s", shaderStage), shaderfile.items);
         if(!CmdRun(cmd)) {
             VL_Log(VL_ERROR, "Could not compile "VIEW_FMT" to %s", VIEW_ARG(noGlslExt), output);
@@ -154,9 +154,9 @@ void CompileGlslShadersInDirectory(vl_cmd *cmd, const char *directory)
     if(VL_ReadEntireDir(directory, &files)) {
         for(size_t fileIdx = 0; fileIdx < files.count; fileIdx++) {
             const char *file = temp_sprintf("%s/%s", directory, files.items[fileIdx]);
-            view fileView = view_FromCstr(file);
+            view fileView = ViewFromCstr(file);
             if(VL_GetFileType(file) == VL_FILE_REGULAR && 
-               view_EndWith(fileView, VIEW_STATIC(".glsl")))
+               ViewEndsWith(fileView, VIEW_STATIC(".glsl")))
             {
                 CompileGlslShader(cmd, fileView);
             }
@@ -206,17 +206,17 @@ int main(int argc, char **argv)
         // Done since we're not going to rerun the program
         if(ProgramAlreadyRunning(EXE_NAME VL_EXE_EXTENSION)) return 0;
         VL_cc(&cmd);
-        cmd_Append(&cmd, "../src/main_hot_reload.c");
+        CmdAppend(&cmd, "../src/main_hot_reload.c");
         VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
         VL_ccWarnings(&cmd);
         if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
 #if defined(_MSC_VER)
-        cmd_Append(&cmd, "/link", "-incremental:no", "-opt:ref");
+        CmdAppend(&cmd, "/link", "-incremental:no", "-opt:ref");
 #endif
         if(!CmdRun(&cmd)) return 1;
     } else {
         VL_cc(&cmd);
-        cmd_Append(&cmd, "../src/main_no_hot_reload.c", "-I", "../include", "-DSHADER_DIRECTORY=\"shaders/\"");
+        CmdAppend(&cmd, "../src/main_no_hot_reload.c", "-I", "../include", "-DSHADER_DIRECTORY=\"shaders/\"");
         VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
         VL_ccWarnings(&cmd);
         if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
@@ -225,13 +225,13 @@ int main(int argc, char **argv)
         VL_ccLibpath(&cmd, "../lib");
 #endif
 #if defined(_MSC_VER)
-        cmd_Append(&cmd, "-incremental:no", "-opt:ref");
+        CmdAppend(&cmd, "-incremental:no", "-opt:ref");
 #endif
         if(!CmdRun(&cmd)) return 1;
     }
 
     if(shouldrun) {
-        cmd_Append(&cmd, "./" EXE_NAME);
+        CmdAppend(&cmd, "./" EXE_NAME);
         if(!CmdRun(&cmd)) {
             VL_Popd();
             return 1;

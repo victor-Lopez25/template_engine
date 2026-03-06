@@ -1,6 +1,6 @@
 /* date = December 29th 2024 10:12 pm
 --Author: Víctor López Cortés
---version: 1.5.7
+--version: 1.6.1
 --Usage:
 Defines: To have any of these take effect, you must define them _before_ including this file
  - VICLIB_IMPLEMENTATION: If you want to have the implementation (only in one file)
@@ -12,7 +12,7 @@ Defines: To have any of these take effect, you must define them _before_ includi
  - VICLIB_NO*: If you want to remove parts of the library:
    - VICLIB_NO_TEMP_ARENA: remove ArenaTemp
    - VICLIB_NO_SORT: remove Sort and all functions used by it
-Check ErrorNumber when errors occur.
+Check VL_ErrorNumber when errors occur.
 
 --Many thanks to the inspirations for this library:
  - Mr4th's 4ed_base_types.h - https://mr-4th.itch.io/4coder (find the file in 'custom' directory)
@@ -73,7 +73,15 @@ SOFTWARE.
 # define OS_WINDOWS 1
 #endif
 
-#if defined(_MSC_VER)
+#if defined(__gnu_linux__)
+# define OS_LINUX 1
+#endif
+
+#if defined(__APPLE__) && defined(__MACH__)
+# define OS_MAC 1
+#endif
+
+#if defined(_MSC_VER) && !defined(__clang__)
 # define COMPILER_CL 1
 # define PRAGMA(x) __pragma(x)
 # define thread_local __declspec(thread)
@@ -85,6 +93,13 @@ SOFTWARE.
 # define COMPILER_GCC 1
 # define PRAGMA(x) _Pragma(#x)
 # define thread_local __thread
+#elif defined(__TINYC__)
+# define COMPILER_TCC 1
+# define PRAGMA(x) _Pragma(#x)
+// NOTE: tcc doesn't support thread-local storage
+// TODO: thread local storage using win32/unistd?
+//       using VL_Init() to start it up?
+# define thread_local 
 #else
 /* unsupported compiler, to support, define:
  necessary:
@@ -96,12 +111,19 @@ SOFTWARE.
 # define thread_local
 #endif
 
-#if defined(__gnu_linux__)
-# define OS_LINUX 1
+#if defined(__x86_64__) || defined(_M_AMD64)
+# define ARCH_X64 1
+#elif defined(__aarch64__) || defined(_M_ARM64)
+# define ARCH_ARM64 1
+#include <arm_neon.h>
 #endif
 
-#if defined(__APPLE__) && defined(__MACH__)
-# define OS_MAC 1
+#if !defined(VICLIB_NO_INT128)
+# ifdef __SIZEOF_INT128__
+#  define VICLIB_INT128 1
+#  define VICLIB_X128_FULL_S(x) ( (((         __int128)(x).hi) << 64) | (x).lo )
+#  define VICLIB_X128_FULL_U(x) ( (((unsigned __int128)(x).hi) << 64) | (x).lo )
+# endif
 #endif
 
 #if !defined(__COLUMN__)
@@ -131,6 +153,10 @@ SOFTWARE.
 #if OS_WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 #elif OS_LINUX
 #include <time.h>
@@ -253,13 +279,16 @@ typedef uint32_t b32;
 typedef float    f32;
 typedef double   f64;
 
-#if COMPILER_CL
+// Any windows compiler
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
 # define U64_Fmt "%llu"
+# define S64_Fmt "%lld"
 #else
 # define U64_Fmt "%lu"
+# define S64_Fmt "%ld"
 #endif
 
-// TODO: Print for different platforms
+// TODO: Print for different platforms...?
 
 #if !defined(AssertAlways) || !defined(AssertMsgAlways)
 # if defined(SDL_h_)
@@ -294,7 +323,19 @@ typedef double   f64;
 # define AssertMsg(expr, msg) AssertMsgAlways(expr, msg)
 #endif
 
-thread_local u32 ErrorNumber = 0;
+typedef enum {
+    ERROR_NO_ERROR = 0,
+
+    ERROR_READ_UNKNOWN,
+    ERROR_WRITE_UNKNOWN,
+    ERROR_READ_FILE_NOT_FOUND,
+    ERROR_WRITE_PATH_NOT_FOUND,
+    ERROR_FILE_ACCESS_DENIED,
+    ERROR_NO_MEM,
+    ERROR_READ_FILE_TOO_BIG, /* READ_ENTIRE_FILE_MAX exceeded */
+} error_number_value;
+
+thread_local error_number_value VL_ErrorNumber = 0;
 
 #ifndef VLIBPROC
 # define VLIBPROC
@@ -314,8 +355,118 @@ thread_local u32 ErrorNumber = 0;
     }
 
 ////////////////////////////////
+// x128
+////////////////////////////////
+
+/* x128 ops implementation by Mārtiņš Možeiko: https://github.com/mmozeiko/overflow/blob/main/x128/x128.h */
+typedef struct {
+    uint64_t lo, hi;
+} x128;
+
+static inline x128 x128_zero(void);
+
+// set from 64-bit value
+static inline x128 x128_set_u64(uint64_t x); // unsigned
+static inline x128 x128_set_s64(int64_t  x); // signed
+
+// get low 64-bit value, ignores top 64 bits
+static inline uint64_t x128_get_u64(x128 x);
+static inline int64_t  x128_get_s64(x128 x);
+
+// make raw 128-bit value
+static inline x128 x128_make(uint64_t lo, uint64_t hi);
+
+// formatting to/from string, base = [2..36]
+static inline x128   x128_set_str(const char* str, size_t len, size_t base);
+static inline size_t x128_get_str_u(x128 x, char* str, size_t maxlen, size_t base); // signed
+static inline size_t x128_get_str_s(x128 x, char* str, size_t maxlen, size_t base); // unsigned
+
+// comparisons
+static inline bool x128_is_zero(x128 x);
+static inline bool x128_is_equal(x128 a, x128 b);
+static inline bool x128_is_even(x128 x);
+static inline bool x128_is_odd(x128 x);
+static inline bool x128_is_neg(x128 x);        // signed, x <  0
+static inline bool x128_is_pos(x128 x);        // signed, x >= 0
+static inline int  x128_signum(x128 x);        // signed,   -1 or 0 or +1
+static inline int  x128_cmp_u(x128 a, x128 b); // unsigned, -1 or 0 or +1
+static inline int  x128_cmp_s(x128 a, x128 b); // signed,   -1 or 0 or +1
+
+static inline x128 x128_min_u(x128 a, x128 b); // unsigned
+static inline x128 x128_min_s(x128 a, x128 b); // signed
+static inline x128 x128_max_u(x128 a, x128 b); // unsigned
+static inline x128 x128_max_s(x128 a, x128 b); // signed
+
+// bitwise
+static inline x128 x128_not(x128 x);
+static inline x128 x128_or (x128 a, x128 b);
+static inline x128 x128_and(x128 a, x128 b);
+static inline x128 x128_xor(x128 a, x128 b);
+static inline x128 x128_shl(x128 x, size_t n);   //                 0 if n >= 128
+static inline x128 x128_shr_u(x128 x, size_t n); // unsigned,       0 if n >= 128
+static inline x128 x128_shr_s(x128 x, size_t n); // signed,   -1 or 0 if n >= 128
+
+static inline size_t x128_clz(x128 x);    // 128 if x == 0
+static inline size_t x128_ctz(x128 x);    // 128 if x == 0
+static inline size_t x128_popcnt(x128 x); 
+
+// arithmetic
+static inline x128 x128_abs(x128 x); // signed
+static inline x128 x128_neg(x128 x); // signed
+
+static inline x128 x128_add(x128 a, x128 b);
+static inline x128 x128_sub(x128 a, x128 b);
+
+static inline x128 x128_mul_64x64 (uint64_t a, uint64_t b); // unsigned
+static inline x128 x128_mul_128x64(    x128 a, uint64_t b); // unsigned
+static inline x128 x128_mul       (    x128 a,     x128 b);
+
+static inline bool x128_div_u(x128 x, x128 d, x128* q, x128* r); // unsigned, false if d == 0
+static inline bool x128_div_s(x128 x, x128 d, x128* q, x128* r); // signed,   false if d == 0. r sign will be same as dividend x
+
+// unsigned division by non-zero 64-bit divisor
+static inline uint64_t x128_div_u64_reciprocal(uint64_t d, size_t* shift);
+static inline uint64_t x128_div_u64(x128 x, uint64_t d, uint64_t reciprocal, size_t shift, x128* q);
+
+////////////////////////////////
 // intrinsics
 ////////////////////////////////
+
+/* Returns the number of leading 0-bits in val, starting at the most significant bit position
+ * If val is 0, the result is undefined
+ */
+static inline uint32_t CountLeadingZerosU32(uint32_t val);
+/* Returns the number of leading 0-bits in val, starting at the most significant bit position
+ * If val is 0, the result is undefined
+ */
+static inline uint32_t CountLeadingZerosU64(uint64_t val);
+
+/* Returns the number of leading 0-bits in val, starting at the least significant bit position
+ * If val is 0, the result is undefined
+ */
+static inline uint32_t CountTrailingZerosU32(uint32_t val);
+/* Returns the number of leading 0-bits in val, starting at the least significant bit position
+ * If val is 0, the result is undefined
+ */
+static inline uint32_t CountTrailingZerosU64(uint64_t val);
+
+/* Returns the number of leading 0-bits in val, starting at the most significant bit position
+ * If val is 0, returns 32
+ */
+static inline uint32_t CountLeadingZerosSafeU32(uint32_t val);
+/* Returns the number of leading 0-bits in val, starting at the most significant bit position
+ * If val is 0, returns 64
+ */
+static inline uint32_t CountLeadingZerosSafeU64(uint64_t val);
+
+/* Returns the number of leading 0-bits in val, starting at the least significant bit position
+ * If val is 0, returns 32
+ */
+static inline uint32_t CountTrailingZerosSafeU32(uint32_t val);
+/* Returns the number of leading 0-bits in val, starting at the least significant bit position
+ * If val is 0, returns 64
+ */
+static inline uint32_t CountTrailingZerosSafeU64(uint64_t val);
 
 #if defined(VL_INC_STRING_H)
 # define mem_copy_non_overlapping(dst, src, len) memcpy(dst, src, len)
@@ -341,7 +492,7 @@ typedef struct {
     const char *items;
     size_t count;
 } view;
-#define VIEW(cstr_lit) view_FromParts((cstr_lit), sizeof(cstr_lit) - 1)
+#define VIEW(cstr_lit) ViewFromParts((cstr_lit), sizeof(cstr_lit) - 1)
 #if defined(__cplusplus)
 #define VIEW_STATIC(cstr_lit) {(const char*)(cstr_lit), sizeof(cstr_lit) - 1}
 #else
@@ -359,47 +510,52 @@ size_t strlen(const char *s);
 #endif // VL_INC_STRING_H
 
 int is_space(int _c); // only checks ascii space characters
-VIEWPROC view view_FromParts(const char *data, size_t count);
-VIEWPROC view view_FromCstr(const char *cstr);
-VIEWPROC view view_Slice(view v, size_t start, size_t end); // won't include end -> [start, end)
-VIEWPROC int  view_Compare(view a, view b); // result = A - B
-VIEWPROC bool view_Eq(view a, view b);
-VIEWPROC bool view_StartsWith(view v, view start);
-VIEWPROC const char *view_Contains(view haystack, view needle); // result = pointer to where the needle is in haystack or null
-VIEWPROC bool view_ContainsCharacter(view v, char c);
-#define view_EndWith view_EndsWith /* in case of singular/plural annoyance */
-VIEWPROC bool view_EndsWith(view v, view end);
-VIEWPROC view view_ChopByDelim(view *v, char delim);
-VIEWPROC view view_ChopByLine(view *v); // '\n' or "\r\n"
-VIEWPROC view view_ChopByAnyDelim(view *v, view delims, char *delimiter); // checks for any character in Delims, stores found delimiter in Delimiter
-VIEWPROC view view_ChopByView(view *v, view delim); // full view is the delim
-VIEWPROC view view_ChopLeft(view *v, size_t n);
-VIEWPROC view view_ChopRight(view *v, size_t n);
-VIEWPROC view view_TrimLeft(view v);
-VIEWPROC view view_TrimRight(view v);
-VIEWPROC view view_Trim(view v);
+VIEWPROC view ViewFromParts(const char *data, size_t count);
+VIEWPROC view ViewFromCstr(const char *cstr);
+VIEWPROC view ViewSlice(view v, size_t start, size_t end); // won't include end -> [start, end)
+VIEWPROC int  ViewCompare(view a, view b); // result = A - B
+VIEWPROC bool ViewEq(view a, view b);
+VIEWPROC bool ViewStartsWith(view v, view start);
+// Chops start from v when it gets found
+VIEWPROC bool ViewChopStartsWith(view *v, view start);
+VIEWPROC const char *ViewFind(view haystack, view needle); // result = pointer to where the needle is in haystack or null
+// If the needle gets found, chop the haystack until the first ocurrence of needle in haystack
+VIEWPROC bool ViewFindChop(view *haystack, view needle, view *chopped);
+VIEWPROC bool ViewFindCharacter(view v, char c, size_t *n);
+VIEWPROC bool ViewFindChopCharacter(view *v, char c, view *chopped);
+#define ViewEndWith ViewEndsWith /* in case of singular/plural annoyance */
+VIEWPROC bool ViewEndsWith(view v, view end);
+VIEWPROC view ViewChopByDelim(view *v, char delim);
+VIEWPROC view ViewChopByLine(view *v); // '\n' or "\r\n"
+VIEWPROC view ViewChopByAnyDelim(view *v, view delims, char *delimiter); // checks for any character in Delims, stores found delimiter in Delimiter
+VIEWPROC view ViewChopByView(view *v, view delim); // full view is the delim
+VIEWPROC view ViewChopLeft(view *v, size_t n);
+VIEWPROC view ViewChopRight(view *v, size_t n);
+VIEWPROC view ViewTrimLeft(view v);
+VIEWPROC view ViewTrimRight(view v);
+VIEWPROC view ViewTrim(view v);
 
-#define view_IterateLines(src, idxName, lineName) \
-    view lineName = view_ChopByLine(src); \
-    for(size_t idxName = 0; (src)->count > 0 || lineName.count > 0; lineName = view_ChopByLine(src), idxName++)
+#define ViewIterateLines(src, idxName, lineName) \
+    view lineName = ViewChopByLine(src); \
+    for(size_t idxName = 0; (src)->count > 0 || lineName.count > 0; lineName = ViewChopByLine(src), idxName++)
 
-#define view_IterateSpaces(src, idxName, wordName) \
-    view wordName = view_ChopByAnyDelim((src), VIEW_STATIC(" \n\t\v\f\r"), 0); \
-    for(size_t idxName = 0; (src)->count > 0 || wordName.count > 0; wordName = view_ChopByAnyDelim((src), VIEW_STATIC(" \n\t\v\f\r"), 0), idxName++) \
+#define ViewIterateSpaces(src, idxName, wordName) \
+    view wordName = ViewChopByAnyDelim((src), VIEW_STATIC(" \n\t\v\f\r"), 0); \
+    for(size_t idxName = 0; (src)->count > 0 || wordName.count > 0; wordName = ViewChopByAnyDelim((src), VIEW_STATIC(" \n\t\v\f\r"), 0), idxName++) \
         if(word.count > 0)
 
-#define view_IterateDelimiters(src, delims, idxName, tokName, delimName) \
+#define ViewIterateDelimiters(src, delims, idxName, tokName, delimName) \
     char delimName; \
-    view tokName = view_ChopByAnyDelim((src), delims, &delimName); \
+    view tokName = ViewChopByAnyDelim((src), delims, &delimName); \
     for(size_t idxName = 0; (src)->count > 0 || tokName.count > 0 || delimName != '\0'; \
-        tokName = view_ChopByAnyDelim((src), delims, &delimName), idxName++)
+        tokName = ViewChopByAnyDelim((src), delims, &delimName), idxName++)
 
 #define PARSE_FAIL 0
 #define PARSE_NO_DECIMALS 1 // for when you might want integer precision
 #define PARSE_OK 2
-VIEWPROC bool view_ParseS64(view v, s64 *result, view *remaining);
+VIEWPROC bool ViewParseS64(view v, s64 *result, view *remaining);
 // TODO: Better exp parsing
-VIEWPROC int view_ParseF64(view v, f64 *result, view *remaining);
+VIEWPROC int ViewParseF64(view v, f64 *result, view *remaining);
 
 typedef struct {
     view file;
@@ -530,23 +686,16 @@ extern struct vl_globalcontext VL_globalContext;
 
 VLIBPROC bool VL_Init(void);
 
+#define VL_HadError() (VL_ErrorNumber != ERROR_NO_ERROR)
 
 #if !defined(VICLIB_NO_PLATFORM)
-
-#define ERROR_READ_UNKNOWN 1
-#define ERROR_READ_FILE_NOT_FOUND 2
-#define ERROR_WRITE_PATH_NOT_FOUND 3
-#define ERROR_FILE_ACCESS_DENIED 4
-#define ERROR_READ_NO_MEM 5
-#define ERROR_READ_FILE_TOO_BIG 6 // READ_ENTIRE_FILE_MAX exceeded
-
-#define ERROR_WRITE_UNKNOWN 1
 
 #ifndef READ_ENTIRE_FILE_MAX
 #define READ_ENTIRE_FILE_MAX 0xFFFFFFFF
 #endif
 
 VLIBPROC bool VL_SetCurrentDir(const char *path);
+VLIBPROC bool VL_FileExists(const char *path);
 
 #if !OS_WINDOWS
 bool IsDebuggerPresent(void);
@@ -579,14 +728,17 @@ typedef struct {
     u32 BufferSize;
     u8 *Buffer;
     size_t RemainingFileSize;
-} file_chunk;
+} vl_file_chunk;
 
-VLIBPROC bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize);
+VLIBPROC bool ReadFileChunk(vl_file_chunk *Chunk, const char *File, u32 *ChunkSize);
 
 VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size);
 VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size);
 
 #endif // !defined(VICLIB_NO_FILE_IO)
+
+VLIBPROC const char *VL_GetError(void);
+
 #endif // !defined(VICLIB_NO_PLATFORM)
 
 // TODO(vic): I think the sort doesn't work 100% of the time? test this
@@ -622,7 +774,7 @@ size_t strlen(const char *s)
 }
 #endif // strlen
 
-VIEWPROC view view_FromParts(const char *data, size_t count)
+VIEWPROC view ViewFromParts(const char *data, size_t count)
 {
     view v;
     v.items = data;
@@ -630,7 +782,7 @@ VIEWPROC view view_FromParts(const char *data, size_t count)
     return v;
 }
 
-VIEWPROC view view_FromCstr(const char *cstr)
+VIEWPROC view ViewFromCstr(const char *cstr)
 {
     view v;
     v.items = cstr;
@@ -638,33 +790,33 @@ VIEWPROC view view_FromCstr(const char *cstr)
     return v;
 }
 
-VIEWPROC view view_Slice(view a, size_t start, size_t end)
+VIEWPROC view ViewSlice(view a, size_t start, size_t end)
 {
     AssertMsg(start <= end, "start must be smaller or equal to end");
     AssertMsg(end <= a.count, "end must be less or equal to the source view count");
-    return view_FromParts(a.items + start, end - start);
+    return ViewFromParts(a.items + start, end - start);
 }
 
-VIEWPROC view view_TrimLeft(view v)
+VIEWPROC view ViewTrimLeft(view v)
 {
     size_t i = 0;
     for(;i < v.count && is_space(v.items[i]);) i += 1;
 
-    return view_FromParts((const char*)(v.items + i), v.count - i);
+    return ViewFromParts((const char*)(v.items + i), v.count - i);
 }
-VIEWPROC view view_TrimRight(view v)
+VIEWPROC view ViewTrimRight(view v)
 {
     size_t i = 0;
     for(;i < v.count && is_space(v.items[v.count - 1 - i]);) i += 1;
 
-    return view_FromParts((const char*)v.items, v.count - i);
+    return ViewFromParts((const char*)v.items, v.count - i);
 }
-VIEWPROC view view_Trim(view v)
+VIEWPROC view ViewTrim(view v)
 {
-    return view_TrimRight(view_TrimLeft(v));
+    return ViewTrimRight(ViewTrimLeft(v));
 }
 
-VIEWPROC int view_Compare(view a, view b)
+VIEWPROC int ViewCompare(view a, view b)
 {
     char res = 0;
     for(size_t i = 0; i < min(a.count, b.count); i++)
@@ -675,57 +827,138 @@ VIEWPROC int view_Compare(view a, view b)
     return (int)a.count - (int)b.count;
 }
 
-VIEWPROC bool view_Eq(view a, view b)
+VIEWPROC bool ViewEq(view a, view b)
 {
     if(a.count != b.count) return false;
     else return mem_compare(a.items, b.items, a.count) == 0;
 }
 
-VIEWPROC bool view_StartsWith(view v, view start)
+VIEWPROC bool ViewStartsWith(view v, view start)
 {
     if(start.count > v.count) return false;
-    else return view_Eq(view_FromParts(v.items, start.count), start);
+    else return ViewEq(ViewFromParts(v.items, start.count), start);
 }
 
-VIEWPROC const char *view_Contains(view haystack, view needle)
+VIEWPROC bool ViewChopStartsWith(view *v, view start)
 {
-    if(needle.count > haystack.count) return 0;
+    bool found = ViewStartsWith(*v, start);
+    if(found) {
+        v->items += start.count;
+        v->count -= start.count;
+    }
+    return found;
+}
+
+VIEWPROC const char *ViewFind(view haystack, view needle)
+{
+    if(needle.count == 0) return haystack.items;
+    if(needle.count > haystack.count) return (const char*)0;
     else if(needle.count == haystack.count) {
         return mem_compare(haystack.items, needle.items, haystack.count) == 0 ?
             haystack.items : 0;
     }
-    
-    // TODO: IMPORTANT: Do this with a string-search algorithm which requires memory, but is O(n+m)
-    // NOTE: I can probably still do this O(n^2) when working with a small haystack (~5000 characters or less?)
-    // NOTE: wiki: https://en.wikipedia.org/wiki/Two-way_string-matching_algorithm
-    for(size_t i = 0; i < haystack.count - needle.count; i++)
-    {
-        if(mem_compare(haystack.items + i, needle.items, needle.count) == 0)
-            return haystack.items + i;
+
+    size_t i = 0;
+    for(; i < haystack.count && haystack.items[i] != needle.items[0]; i++);
+    if(i == haystack.count || needle.count == 1) return (const char*)0;
+    haystack.items += i;
+    haystack.count -= i;
+    if(haystack.count < needle.count) return (const char*)0;
+
+    // Stolen from the musl's implementation of memmem
+    switch(needle.count) {
+        case 2: {
+            // twobyte_memmem
+            uint16_t nw = needle.items[0] << 8 | needle.items[1];
+            uint16_t hw = haystack.items[0] << 8 | haystack.items[1];
+            for (haystack.items += 2, haystack.count -= 2; haystack.count; haystack.count--, hw = hw << 8 | *haystack.items++)
+                if(hw == nw) return (const char*)(haystack.items - 2);
+            return hw == nw ? (const char*)(haystack.items - 2) : (const char*)0;
+        } break;
+
+        case 3: {
+            // threebyte_memmem
+            uint32_t nw = (uint32_t)needle.items[0] << 24 | needle.items[1] << 16 | needle.items[2] << 8;
+            uint32_t hw = (uint32_t)haystack.items[0] << 24 | haystack.items[1] << 16 | haystack.items[2] << 8;
+            for (haystack.items += 3, haystack.count -= 3; haystack.count; haystack.count--, hw = (hw | *haystack.items++) << 8)
+                if (hw == nw) return (const char*)(haystack.items - 3);
+            return hw == nw ? (const char*)(haystack.items - 3) : (const char*)0;
+        } break;
+
+        case 4: {
+            // fourbyte_memmem
+            uint32_t nw = (uint32_t)needle.items[0] << 24 | needle.items[1] << 16 | needle.items[2] << 8 | needle.items[3];
+            uint32_t hw = (uint32_t)haystack.items[0] << 24 | haystack.items[1] << 16 | haystack.items[2] << 8 | haystack.items[3];
+            for (haystack.items += 4, haystack.count -= 4; haystack.count; haystack.count--, hw = hw << 8 | *haystack.items++)
+                if (hw == nw) return (const char*)(haystack.items - 4);
+            return hw == nw ? (const char*)(haystack.items - 4) : (const char*)0;
+        } break;
     }
-    return 0;
+
+    // twoway_memmem
+    // TODO
+    for(i = 0; i < haystack.count - needle.count; i++) {
+        if(mem_compare(haystack.items + i, needle.items, needle.count) == 0)
+            return (const char*)(haystack.items + i);
+    }
+    return (const char*)0;
 }
 
-VIEWPROC bool view_ContainsCharacter(view v, char c)
+VIEWPROC bool ViewFindChop(view *haystack, view needle, view *chopped)
 {
-    for(size_t i = 0; i < v.count; i++) {
-        if(v.items[i] == c) return true;
+    const char *s = ViewFind(*haystack, needle);
+    if(s) {
+        size_t count = s - haystack->items;
+        if(chopped) {
+            chopped->items = haystack->items;
+            chopped->count = count;
+        }
+        haystack->items = s + needle.count;
+        haystack->count -= count + needle.count;
+        return true;
     }
     return false;
 }
 
-VIEWPROC bool view_EndsWith(view v, view end)
+VIEWPROC bool ViewFindCharacter(view v, char c, size_t *n)
 {
-    if(end.count > v.count) return false;
-    else return view_Eq(view_FromParts(v.items + v.count - end.count, end.count), end);
+    for(size_t i = 0; i < v.count; i++) {
+        if(v.items[i] == c) {
+            if(n) *n = i;
+            return true;
+        }
+    }
+    return false;
 }
 
-VIEWPROC view view_ChopByDelim(view *v, char delim)
+VIEWPROC bool ViewFindChopCharacter(view *v, char c, view *chopped)
+{
+    size_t count;
+    bool found = ViewFindCharacter(*v, c, &count);
+    if(found) {
+        if(chopped) {
+            chopped->items = v->items;
+            chopped->count = count;
+        }
+        // skip the character
+        v->items = v->items + count + 1;
+        v->count -= count + 1;
+    }
+    return found;
+}
+
+VIEWPROC bool ViewEndsWith(view v, view end)
+{
+    if(end.count > v.count) return false;
+    else return ViewEq(ViewFromParts(v.items + v.count - end.count, end.count), end);
+}
+
+VIEWPROC view ViewChopByDelim(view *v, char delim)
 {
     size_t i = 0;
     for(;i < v->count && v->items[i] != delim;) i += 1;
 
-    view Result = view_FromParts((const char*)v->items, i);
+    view Result = ViewFromParts((const char*)v->items, i);
 
     if(i < v->count) {
         v->count -= i + 1;
@@ -739,7 +972,7 @@ VIEWPROC view view_ChopByDelim(view *v, char delim)
     return Result;
 }
 
-VIEWPROC view view_ChopByLine(view *v)
+VIEWPROC view ViewChopByLine(view *v)
 {
     size_t moveLen = 1;
     size_t i = 0;
@@ -749,7 +982,7 @@ VIEWPROC view view_ChopByLine(view *v)
         i--;
     }
 
-    view Result = view_FromParts((const char*)v->items, i);
+    view Result = ViewFromParts((const char*)v->items, i);
 
     if(i < v->count) {
         v->count -= i + moveLen;
@@ -763,7 +996,7 @@ VIEWPROC view view_ChopByLine(view *v)
     return Result;
 }
 
-VIEWPROC view view_ChopByAnyDelim(view *v, view delims, char *delimiter)
+VIEWPROC view ViewChopByAnyDelim(view *v, view delims, char *delimiter)
 {
     view Result;
     if(delimiter) *delimiter = 0;
@@ -778,7 +1011,7 @@ VIEWPROC view view_ChopByAnyDelim(view *v, view delims, char *delimiter)
     }
 
 done:
-    Result = view_FromParts((const char*)v->items, i);
+    Result = ViewFromParts((const char*)v->items, i);
 
     if(i < v->count) {
         v->count -= i + 1;
@@ -792,17 +1025,16 @@ done:
     return Result;
 }
 
-VIEWPROC view view_ChopByView(view *v, view delim)
+VIEWPROC view ViewChopByView(view *v, view delim)
 {
-    view Window = view_FromParts((const char*)v->items, delim.count);
+    view Window = ViewFromParts((const char*)v->items, delim.count);
     size_t i = 0;
-    for(;i + delim.count < v->count && !view_Eq(Window, delim);)
-    {
+    for(; i + delim.count < v->count && !ViewEq(Window, delim);) {
         i++;
         Window.items++;
     }
 
-    view Result = view_FromParts((const char*)v->items, i);
+    view Result = ViewFromParts((const char*)v->items, i);
 
     if(i + delim.count == v->count) {
         // include last <delim.count> characters if they aren't
@@ -816,22 +1048,22 @@ VIEWPROC view view_ChopByView(view *v, view delim)
     return Result;
 }
 
-VIEWPROC view view_ChopLeft(view *v, size_t n)
+VIEWPROC view ViewChopLeft(view *v, size_t n)
 {
     if(n > v->count) n = v->count;
 
-    view Result = view_FromParts((const char*)v->items, n);
+    view Result = ViewFromParts((const char*)v->items, n);
     v->items += n;
     v->count -= n;
 
     return Result;
 }
 
-VIEWPROC view view_ChopRight(view *v, size_t n)
+VIEWPROC view ViewChopRight(view *v, size_t n)
 {
     if(n > v->count) n = v->count;
 
-    view Result = view_FromParts((const char*)(v->items + v->count - n), n);
+    view Result = ViewFromParts((const char*)(v->items + v->count - n), n);
     v->count -= n;
 
     return Result;
@@ -856,10 +1088,10 @@ int _digit_val(int c)
 // try to compile: int n = 080;
 // I checked out how Odin did octal and they do "0o" prefix, seemed more logical.
 // I also don't know what the "0z" prefix of base 12 is for but I'll just leave it there
-VIEWPROC bool view_ParseS64(view v, s64 *result, view *remaining)
+VIEWPROC bool ViewParseS64(view v, s64 *result, view *remaining)
 {
     AssertMsg(result != 0, "Result parameter must be a valid pointer");
-    v = view_TrimLeft(v);
+    v = ViewTrimLeft(v);
     if(v.count == 0) return false;
 
     bool Neg = false;
@@ -900,8 +1132,7 @@ VIEWPROC bool view_ParseS64(view v, s64 *result, view *remaining)
 
     s64 Value = 0;
     int j = 0;
-    for(; j < (int)v.count; j++)
-    {
+    for(; j < (int)v.count; j++) {
         char c = v.items[j];
         if(c != '_') {
             Digit = _digit_val((int)c);
@@ -924,10 +1155,10 @@ VIEWPROC bool view_ParseS64(view v, s64 *result, view *remaining)
     return true;
 }
 
-int view_ParseF64(view v, f64 *result, view *remaining)
+int ViewParseF64(view v, f64 *result, view *remaining)
 {
     AssertMsg(result != 0, "Result parameter must be a valid pointer");
-    v = view_TrimLeft(v);
+    v = ViewTrimLeft(v);
     if(v.count == 0) return PARSE_FAIL;
     bool DecimalPart = false;
 
@@ -958,8 +1189,7 @@ int view_ParseF64(view v, f64 *result, view *remaining)
     bool FoundExponent = false;
     view ExponentStr;
     size_t j = 0;
-    for(; j < v.count; j++)
-    {
+    for(; j < v.count; j++) {
         char c = v.items[j];
         if(c == '.') {
             DecimalPart = true;
@@ -970,7 +1200,7 @@ int view_ParseF64(view v, f64 *result, view *remaining)
         else if(c == 'e' || c == 'E') {
             // Try to parse exponent
             // Not sure how I feel about this, there probably is a better way to do this
-            ExponentStr = view_FromParts(v.items + j + 1, v.count - j - 1);
+            ExponentStr = ViewFromParts(v.items + j + 1, v.count - j - 1);
 
             bool Prefixed = false;
             bool ExpNeg = false;
@@ -993,8 +1223,7 @@ int view_ParseF64(view v, f64 *result, view *remaining)
             
             FoundExponent = true;
             size_t ExpEnd = 0;
-            for(; ExpEnd < ExponentStr.count; ExpEnd++)
-            {
+            for(; ExpEnd < ExponentStr.count; ExpEnd++) {
                 if(ExponentStr.items[ExpEnd] > '9' || ExponentStr.items[ExpEnd] < '0') break;
             }
 
@@ -1003,8 +1232,7 @@ int view_ParseF64(view v, f64 *result, view *remaining)
             if(ExpNeg) {
                 for(int k = 0; k < charVal; k++) Val /= ExpMultiplier;
                 ExpMultiplier = 10000000000.0;
-                for(s64 k = (s64)ExpEnd - 2; k >= 0; k--)
-                {
+                for(s64 k = (s64)ExpEnd - 2; k >= 0; k--) {
                     charVal = ExponentStr.items[k] - '0';
                     for(int l = 0; l < charVal; l++) Val /= ExpMultiplier;
                     ExpMultiplier *= 10000000000.0;
@@ -1012,8 +1240,7 @@ int view_ParseF64(view v, f64 *result, view *remaining)
             } else {
                 for(int k = 0; k < charVal; k++) Val *= ExpMultiplier;
                 ExpMultiplier = 10000000000.0;
-                for(s64 k = (s64)ExpEnd - 2; k >= 0; k--)
-                {
+                for(s64 k = (s64)ExpEnd - 2; k >= 0; k--) {
                     charVal = ExponentStr.items[k] - '0';
                     for(int l = 0; l < charVal; l++) Val *= ExpMultiplier;
                     ExpMultiplier *= 10000000000.0;
@@ -1096,7 +1323,7 @@ VLIBPROC void mem_copy(void *dst, const void *src, size_t len)
             s = (const u8*)wideSrc;
         }
 #endif
-		for (; len; len--) *d++ = *s++;
+		for(; len; len--) *d++ = *s++;
     } else {
 #if COMPILER_GCC
 		if((uintptr_t)s % sizeof(size_t) == (uintptr_t)d % sizeof(size_t)) {
@@ -1138,11 +1365,10 @@ VLIBPROC void mem_zero(void *data, size_t len)
 
 VLIBPROC int mem_compare(const void *str1, const void *str2, size_t count)
 {
-    register const unsigned char *s1 = (const unsigned char*)str1;
-    register const unsigned char *s2 = (const unsigned char*)str2;
+    const unsigned char *s1 = (const unsigned char*)str1;
+    const unsigned char *s2 = (const unsigned char*)str2;
 
-    for(;count-- > 0;)
-    {
+    for(;count-- > 0;) {
         if(*s1++ != *s2++)
             return s1[-1] < s2[-1] ? -1 : 1;
     }
@@ -1331,6 +1557,15 @@ VLIBPROC bool VL_SetCurrentDir(const char *path)
 #endif
 }
 
+VLIBPROC bool VL_FileExists(const char *path)
+{
+#if _WIN32
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+#else
+    return access(path, F_OK) == 0;
+#endif
+}
+
 #if !OS_WINDOWS
 #include <string.h> /* strstr */
 #include <ctype.h>
@@ -1350,12 +1585,11 @@ bool IsDebuggerPresent(void)
 
     buf[num_read] = '\0';
     char tracerPidString[] = "TracerPid:";
-    const char *tracer_pid_ptr = strstr(buf, tracerPidString); // TODO: use view_Contains (when it is better)
+    const char *tracer_pid_ptr = strstr(buf, tracerPidString); // TODO: use ViewContains (when it is better)
     if (!tracer_pid_ptr)
         return false;
     
-    for (const char* characterPtr = tracer_pid_ptr + sizeof(tracerPidString) - 1; characterPtr <= buf + num_read; ++characterPtr)
-    {
+    for(const char* characterPtr = tracer_pid_ptr + sizeof(tracerPidString) - 1; characterPtr <= buf + num_read; ++characterPtr) {
         if (isspace(*characterPtr))
             continue;
         else
@@ -1397,7 +1631,7 @@ VLIBPROC file_type VL_GetFileType(const char *path)
     DWORD attr = GetFileAttributesA(path);
     if(attr == INVALID_FILE_ATTRIBUTES) return VL_FILE_INVALID;
     if(attr & FILE_ATTRIBUTE_DIRECTORY) return VL_FILE_DIRECTORY;
-    // TODO: detect symlinks on Windows (whatever that means on Windows anyway)
+    if(attr & FILE_ATTRIBUTE_REPARSE_POINT) return VL_FILE_SYMLINK;
     return VL_FILE_REGULAR;
 #elif OS_LINUX || OS_MAC
     struct stat statbuf;
@@ -1436,8 +1670,8 @@ VLIBPROC u64 VL_GetNanos(void)
 PUSH_IGNORE_UNINITIALIZED
 VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
 {
+    VL_ErrorNumber = ERROR_NO_ERROR;
 #if OS_WINDOWS
-    ErrorNumber = 0;
     AssertMsg(Size != 0, "Size parameter must be a valid pointer");
     char *result = 0;
     HANDLE FileHandle = CreateFileA(File, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
@@ -1447,31 +1681,31 @@ VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
         switch(Error) {
             case ERROR_INVALID_DRIVE: fallthrough;
             case ERROR_PATH_NOT_FOUND: fallthrough;
-            case ERROR_FILE_NOT_FOUND: ErrorNumber = ERROR_READ_FILE_NOT_FOUND; break;
-            case ERROR_ACCESS_DENIED: ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
+            case ERROR_FILE_NOT_FOUND: VL_ErrorNumber = ERROR_READ_FILE_NOT_FOUND; break;
+            case ERROR_ACCESS_DENIED: VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
 
-            default: ErrorNumber = ERROR_READ_UNKNOWN; break;
+            default: VL_ErrorNumber = ERROR_READ_UNKNOWN; break;
         }
     }
 
     LARGE_INTEGER FileSize;
     if(ok) {
         ok = (bool)GetFileSizeEx(FileHandle, &FileSize);
-        if(!ok) ErrorNumber = ERROR_READ_UNKNOWN;
+        if(!ok) VL_ErrorNumber = ERROR_READ_UNKNOWN;
     }
 
     u64 Limit = READ_ENTIRE_FILE_MAX;
 
     if(ok) {
         ok = (u64)FileSize.QuadPart <= Limit;
-        if(!ok) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+        if(!ok) VL_ErrorNumber = ERROR_READ_FILE_TOO_BIG;
     }
     u32 FileSizeU32 = (u32)FileSize.QuadPart;
 
     size_t arenaMark = Arena->used;
     if(ok) {
         if(ArenaGetRemaining(Arena) < (size_t)FileSize.QuadPart) {
-            ErrorNumber = ERROR_READ_NO_MEM;
+            VL_ErrorNumber = ERROR_NO_MEM;
             ok = false;
         } else {
             result = ArenaPushSize(Arena, FileSize.QuadPart);
@@ -1484,7 +1718,7 @@ VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
         {
             *Size = FileSize.QuadPart;
         } else {
-            ErrorNumber = ERROR_READ_UNKNOWN;
+            VL_ErrorNumber = ERROR_READ_UNKNOWN;
             mem_zero(Arena->base + arenaMark, Arena->used - arenaMark);
             Arena->used = arenaMark;
         }
@@ -1492,29 +1726,28 @@ VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
 
     CloseHandle(FileHandle);
 #elif OS_LINUX || OS_MAC
-    ErrorNumber = 0;
     char *result = 0;
     int fd = open(File, O_RDONLY);
     if(fd == -1) {
-        if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
-        else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
-        else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+        if(errno == EACCES || errno == EPERM) VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED;
+        else if(errno == ENOMEM) VL_ErrorNumber = ERROR_NO_MEM;
+        else if(errno == EOVERFLOW) VL_ErrorNumber = ERROR_READ_FILE_TOO_BIG;
         else if(errno == EBADF || errno == ENOENT)
-            ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-        else ErrorNumber = ERROR_READ_UNKNOWN;
+            VL_ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
+        else VL_ErrorNumber = ERROR_READ_UNKNOWN;
         return 0;
     }
 
     struct stat stat;
     if(fstat(fd, &stat) == -1) {
-        ErrorNumber = ERROR_READ_UNKNOWN;
+        VL_ErrorNumber = ERROR_READ_UNKNOWN;
         close(fd);
         return 0;
     }
 
     size_t arenaMark = Arena->used;
     if(ArenaGetRemaining(Arena) < (size_t)stat.st_size) {
-        ErrorNumber = ERROR_READ_NO_MEM;
+        VL_ErrorNumber = ERROR_NO_MEM;
         close(fd);
         return 0;
     } else {
@@ -1523,7 +1756,7 @@ VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
 
     ssize_t bytesRead = read(fd, result, stat.st_size);
     if(bytesRead != stat.st_size) {
-        ErrorNumber = ERROR_READ_UNKNOWN;
+        VL_ErrorNumber = ERROR_READ_UNKNOWN;
         close(fd);
         mem_zero(Arena->base + arenaMark, Arena->used - arenaMark);
         Arena->used = arenaMark;
@@ -1540,10 +1773,10 @@ VLIBPROC char *ReadEntireFile(memory_arena *Arena, char *File, size_t *Size)
 }
 RESTORE_WARNINGS
 
-bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
+bool ReadFileChunk(vl_file_chunk *Chunk, const char *File, u32 *ChunkSize)
 {
     AssertMsg(Chunk->Buffer && Chunk->BufferSize, "Requires a valid buffer and a buffer size");
-    ErrorNumber = 0;
+    VL_ErrorNumber = 0;
 
 #if OS_WINDOWS
     if(!Chunk->File) {
@@ -1553,17 +1786,18 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
             switch(Error) {
                 case ERROR_INVALID_DRIVE: fallthrough;
                 case ERROR_PATH_NOT_FOUND: fallthrough;
-                case ERROR_FILE_NOT_FOUND: ErrorNumber = ERROR_READ_FILE_NOT_FOUND; break;
-                case ERROR_ACCESS_DENIED: ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
+                case ERROR_FILE_NOT_FOUND: VL_ErrorNumber = ERROR_READ_FILE_NOT_FOUND; break;
+                case ERROR_ACCESS_DENIED: VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
 
-                default: ErrorNumber = ERROR_READ_UNKNOWN; break;
+                default: VL_ErrorNumber = ERROR_READ_UNKNOWN; break;
             }
             return false;
         }
 
         LARGE_INTEGER FileSize;
         if(GetFileSizeEx(Chunk->File, &FileSize) == 0) {
-            ErrorNumber = ERROR_READ_UNKNOWN; // TODO: find out why it failed
+            // NOTE: Shouldn't fail if CreateFile didn't fail
+            VL_ErrorNumber = ERROR_READ_UNKNOWN;
             return false;
         }
 
@@ -1580,7 +1814,7 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
     {
         *ChunkSize = (u32)OutSize;
     } else {
-        ErrorNumber = ERROR_READ_UNKNOWN;
+        VL_ErrorNumber = ERROR_READ_UNKNOWN;
         return false;
     }
 
@@ -1589,18 +1823,18 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
         Chunk->didFirstIteration = true;
         Chunk->fd = open(File, O_RDONLY);
         if(Chunk->fd == -1) {
-            if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
-            else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
-            else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+            if(errno == EACCES || errno == EPERM) VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED;
+            else if(errno == ENOMEM) VL_ErrorNumber = ERROR_NO_MEM;
+            else if(errno == EOVERFLOW) VL_ErrorNumber = ERROR_READ_FILE_TOO_BIG;
             else if(errno == EBADF || errno == ENOENT)
-                ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-            else ErrorNumber = ERROR_READ_UNKNOWN;
+                VL_ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
+            else VL_ErrorNumber = ERROR_READ_UNKNOWN;
             return false;
         }
 
         struct stat stat;
         if(fstat(Chunk->fd, &stat) == -1) {
-            ErrorNumber = ERROR_READ_UNKNOWN;
+            VL_ErrorNumber = ERROR_READ_UNKNOWN;
             close(Chunk->fd);
             return false;
         }
@@ -1618,7 +1852,7 @@ bool ReadFileChunk(file_chunk *Chunk, const char *File, u32 *ChunkSize)
     if(OutSize == (size_t)read(Chunk->fd, Chunk->Buffer, OutSize)) {
         *ChunkSize = (u32)OutSize;
     } else {
-        ErrorNumber = ERROR_READ_UNKNOWN;
+        VL_ErrorNumber = ERROR_READ_UNKNOWN;
         return false;
     }
 #else
@@ -1642,10 +1876,10 @@ VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size)
         switch(Error) {
             case ERROR_INVALID_DRIVE: fallthrough;
             case ERROR_PATH_NOT_FOUND: fallthrough;
-            case ERROR_FILE_NOT_FOUND: ErrorNumber = ERROR_WRITE_PATH_NOT_FOUND; break;
-            case ERROR_ACCESS_DENIED: ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
+            case ERROR_FILE_NOT_FOUND: VL_ErrorNumber = ERROR_WRITE_PATH_NOT_FOUND; break;
+            case ERROR_ACCESS_DENIED: VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED; break;
 
-            default: ErrorNumber = ERROR_WRITE_UNKNOWN;
+            default: VL_ErrorNumber = ERROR_WRITE_UNKNOWN;
         }
         VL_ReturnDefer(false);
     }
@@ -1657,7 +1891,7 @@ VLIBPROC bool WriteEntireFile(const char *File, const void *Data, size_t Size)
     DWORD bytesWritten = 0;
     while(bytesToWriteTotal > bytesWrittenTotal) {
         if(!WriteFile(fhandle, fData, bytesToWriteTotal - bytesWrittenTotal, &bytesWritten, 0)) {
-            ErrorNumber = ERROR_WRITE_UNKNOWN;
+            VL_ErrorNumber = ERROR_WRITE_UNKNOWN;
             VL_ReturnDefer(false);
         }
         bytesWrittenTotal += bytesWritten;
@@ -1671,13 +1905,13 @@ defer:
 #elif OS_LINUX || OS_MAC
     int fd = open(File, O_CREAT | O_WRONLY | O_TRUNC);
     if(fd == -1) {
-        if(errno == EACCES || errno == EPERM) ErrorNumber = ERROR_FILE_ACCESS_DENIED;
-        else if(errno == ENOMEM) ErrorNumber = ERROR_READ_NO_MEM;
-        else if(errno == EOVERFLOW) ErrorNumber = ERROR_READ_FILE_TOO_BIG;
+        if(errno == EACCES || errno == EPERM) VL_ErrorNumber = ERROR_FILE_ACCESS_DENIED;
+        else if(errno == ENOMEM) VL_ErrorNumber = ERROR_NO_MEM;
+        else if(errno == EOVERFLOW) VL_ErrorNumber = ERROR_READ_FILE_TOO_BIG;
         // this could happen if creating a file in a directory that doesn't exist I think?
         else if(errno == EBADF || errno == ENOENT)
-            ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
-        else ErrorNumber = ERROR_READ_UNKNOWN;
+            VL_ErrorNumber = ERROR_READ_FILE_NOT_FOUND;
+        else VL_ErrorNumber = ERROR_READ_UNKNOWN;
         return false;
     }
 
@@ -1687,7 +1921,7 @@ defer:
     while(bytesToWriteTotal > bytesWrittenTotal) {
         ssize_t bytesWritten = write(fd, fData, bytesToWriteTotal - bytesWrittenTotal);
         if(bytesWritten == -1) {
-            ErrorNumber = ERROR_WRITE_UNKNOWN;
+            VL_ErrorNumber = ERROR_WRITE_UNKNOWN;
             VL_ReturnDefer(false);
         }
         bytesWrittenTotal += bytesWritten;
@@ -1703,6 +1937,22 @@ defer:
 }
 
 #endif // !defined(VICLIB_NO_FILE_IO)
+
+VLIBPROC const char *VL_GetError(void) {
+    switch(VL_ErrorNumber) {
+        case ERROR_READ_UNKNOWN: return "Unknown read error";
+        case ERROR_WRITE_UNKNOWN: return "Unknown write error";
+        case ERROR_READ_FILE_NOT_FOUND: return "File not found";
+        case ERROR_WRITE_PATH_NOT_FOUND: return "Path not found"; /* A directory specified to get to the file does not exist */
+        case ERROR_FILE_ACCESS_DENIED: return "Access denied";
+        case ERROR_NO_MEM: return "No remaining memory";
+        case ERROR_READ_FILE_TOO_BIG: return "File too large";
+    
+        case ERROR_NO_ERROR:
+        default: return "Unknown error";
+    }
+}
+
 #endif // !defined(VICLIB_NO_PLATFORM)
 
 #ifndef VICLIB_NO_SORT
@@ -1840,4 +2090,1127 @@ void VL_HeapSort(void *Data, size_t Count, size_t ElementSize, bool (*less_than)
 
 #endif // !defined(VICLIB_NO_SORT)
 #endif // VICLIB_IMPLEMENTATION
+
+// NOTE: 'static inline' functions should be outside VICLIB_IMPLEMENTATION
+
+/* x128 ops implementation by Mārtiņš Možeiko: https://github.com/mmozeiko/overflow/blob/main/x128/x128.h */
+x128 x128_zero(void)
+{
+    x128 r = { 0, 0 };
+    return r;
+}
+
+x128 x128_set_u64(uint64_t x)
+{
+    x128 r = { x, 0 };
+    return r;
+}
+
+x128 x128_set_s64(int64_t x)
+{
+    x128 r = { (uint64_t)x, (uint64_t)(x >> 63) };
+    return r;
+}
+
+uint64_t x128_get_u64(x128 x)
+{
+    return x.lo;
+}
+
+int64_t x128_get_s64(x128 x)
+{
+    return (int64_t)x.lo;
+}
+
+x128 x128_make(uint64_t lo, uint64_t hi)
+{
+    x128 r = { lo, hi };
+    return r;
+}
+
+x128 x128_set_str(const char* str, size_t len, size_t base)
+{
+    x128 x = x128_zero();
+    bool negative = false;
+
+    if (str[0] == '-')
+    {
+        negative = true;
+        str++;
+        if (len)
+        {
+            len--;
+        }
+    }
+
+    size_t maxlen = len;
+
+    for (;;)
+    {
+        if (maxlen && len-- == 0)
+        {
+            break;
+        }
+
+        char ch = *str++;
+        if (ch == 0)
+        {
+            break;
+        }
+
+        uint64_t digit = (ch >= '0' && ch <= '9') ? (ch - '0')
+                       : (ch >= 'a' && ch <= 'z') ? (ch - 'a' + 10)
+                       : (ch >= 'A' && ch <= 'Z') ? (ch - 'A' + 10)
+                       : 0;
+        x = x128_mul_128x64(x, base);
+        x = x128_add(x, x128_set_u64(digit));
+    }
+
+    return negative ? x128_neg(x) : x;
+}
+
+size_t x128_get_str_u(x128 x, char* str, size_t maxlen, size_t base)
+{
+    char digits[128];
+    size_t len = 0;
+
+    if (x128_is_zero(x))
+    {
+        digits[len++] = '0';
+    }
+    else
+    {
+        size_t shift;
+        uint64_t inv = x128_div_u64_reciprocal(base, &shift);
+
+        do
+        {
+            uint64_t digit = x128_div_u64(x, base, inv, shift, &x);
+            digits[len++] = (char)((digit < 10 ? '0' : 'a' - 10) + digit);
+        }
+        while (!x128_is_zero(x));
+    }
+
+    for (size_t i=0; i<len && i<maxlen; i++)
+    {
+        str[i] = digits[len-1-i];
+    }
+    if (len < maxlen)
+    {
+        str[len] = 0;
+    }
+    return len;
+}
+
+size_t x128_get_str_s(x128 x, char* str, size_t maxlen, size_t base)
+{   
+    size_t ret = 0;
+
+    if (x128_is_neg(x))
+    {
+        if (maxlen)
+        {
+            *str++ = '-';
+            maxlen--;
+        }
+        ret++;
+        x = x128_abs(x);
+    }
+
+    return ret + x128_get_str_u(x, str, maxlen, base);
+}
+
+bool x128_is_zero(x128 x)
+{
+    return (x.lo | x.hi) == 0;
+}
+
+bool x128_is_equal(x128 a, x128 b)
+{
+    return ((a.lo ^ b.lo) | (a.hi ^ b.hi)) == 0;
+}
+
+bool x128_is_neg(x128 x)
+{
+    return !!(x.hi >> 63);
+}
+
+bool x128_is_pos(x128 x)
+{
+    return !(x.hi >> 63);
+}
+
+bool x128_is_even(x128 x)
+{
+    return (x.lo & 1) == 0;
+}
+
+bool x128_is_odd(x128 x)
+{
+    return (x.lo & 1) != 0;
+}
+
+int x128_signum(x128 x)
+{
+    uint64_t r = (uint64_t)((int64_t)x.hi >> 63);
+    r |= 1;
+    return x.hi | x.lo ? (int)r : 0;
+}
+
+int x128_cmp_u(x128 a, x128 b)
+{
+#if VICLIB_INT128
+
+    unsigned __int128 aval = VICLIB_X128_FULL_U(a);
+    unsigned __int128 bval = VICLIB_X128_FULL_U(b);
+
+    return (aval > bval) - (aval < bval);
+
+#else
+
+    int lo = (a.lo > b.lo) - (a.lo < b.lo);
+    int hi = (a.hi > b.hi) - (a.hi < b.hi);
+
+    return hi ? hi : lo;
+
+#endif
+}
+
+int x128_cmp_s(x128 a, x128 b)
+{
+#if VICLIB_INT128
+
+    __int128 aval = VICLIB_X128_FULL_S(a);
+    __int128 bval = VICLIB_X128_FULL_S(b);
+
+    return (aval > bval) - (aval < bval);
+
+#else
+
+    int an = a.hi >> 63;
+    int bn = b.hi >> 63;
+
+    int r = x128_cmp_u(a, b);
+    int n = bn - an;
+    return n ? n : r;
+
+#endif
+}
+
+x128 x128_min_u(x128 a, x128 b)
+{
+    return x128_cmp_u(a, b) < 0 ? a : b;
+}
+
+x128 x128_min_s(x128 a, x128 b)
+{
+    return x128_cmp_s(a, b) < 0 ? a : b;
+}
+
+x128 x128_max_u(x128 a, x128 b)
+{
+    return x128_cmp_u(a, b) > 0 ? a : b;
+}
+
+x128 x128_max_s(x128 a, x128 b)
+{
+    return x128_cmp_s(a, b) > 0 ? a : b;
+}
+
+x128 x128_not(x128 x)
+{
+    return x128_make(~x.lo, ~x.hi);
+}
+    
+x128 x128_or(x128 a, x128 b)
+{
+    return x128_make(a.lo | b.lo, a.hi | b.hi);
+}
+
+x128 x128_and(x128 a, x128 b)
+{
+    return x128_make(a.lo & b.lo, a.hi & b.hi);
+}
+
+x128 x128_xor(x128 a, x128 b)
+{
+    return x128_make(a.lo ^ b.lo, a.hi ^ b.hi);
+}
+
+x128 x128_shl(x128 x, size_t n)
+{   
+    size_t full = n;
+    n &= 127;
+
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(x) << n;
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    hi = __shiftleft128(x.lo, x.hi, (uint8_t)n);
+    lo = x.lo << n;
+
+    hi = n < 64 ? hi : lo;
+    lo = n < 64 ? lo : 0;
+
+#else
+
+    if (n == 0)
+    {
+        hi = x.hi;
+        lo = x.lo;
+    }
+    else if (n < 64)
+    {
+        hi = (x.hi << n) | (x.lo >> (64 - n));
+        lo = (x.lo << n);
+    }
+    else
+    {
+        hi = (x.lo << (n - 64));
+        lo = 0;
+    }
+
+#endif
+
+    lo = full < 128 ? lo : 0;
+    hi = full < 128 ? hi : 0;
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_shr_u(x128 x, size_t n)
+{
+    size_t full = n;
+    n &= 127;
+
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(x) >> n;
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    lo = __shiftright128(x.lo, x.hi, (uint8_t)n);
+    hi = x.hi >> n;
+
+    lo = n < 64 ? lo : hi;
+    hi = n < 64 ? hi : 0;
+
+#else
+
+    if (n == 0)
+    {
+        lo = x.lo;
+        hi = x.hi;
+    }
+    else if (n < 64)
+    {
+        lo = (x.lo >> n) | (x.hi << (64 - n));
+        hi = (x.hi >> n);
+    }
+    else
+    {
+        lo = (x.hi >> (n - 64));
+        hi = 0;
+    }
+
+#endif
+
+    lo = full < 128 ? lo : 0;
+    hi = full < 128 ? hi : 0;
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_shr_s(x128 x, size_t n)
+{
+    size_t full = n;
+    n &= 127;
+
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    __int128 r = VICLIB_X128_FULL_S(x) >> n;
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    lo = __shiftright128(x.lo, x.hi, (uint8_t)n);
+    hi = (int64_t)x.hi >> n;
+
+    uint64_t top = (int64_t)x.hi >> 63;
+    lo = n < 64 ? lo : hi;
+    hi = n < 64 ? hi : top;
+
+#else
+
+    if (n == 0)
+    {
+        lo = x.lo;
+        hi = x.hi;
+    }
+    else if (n < 64)
+    {
+        lo = (         x.lo >> n) | (x.hi << (64 - n));
+        hi = ((int64_t)x.hi >> n);
+    }
+    else
+    {
+        lo = ((int64_t)x.hi >> (n - 64));
+        hi = ((int64_t)x.hi >> 63);
+    }
+
+#endif
+
+    uint64_t topbits = (uint64_t)((int64_t)x.hi >> 63);
+    lo = full < 128 ? lo : topbits;
+    hi = full < 128 ? hi : topbits;
+
+    return x128_make(lo, hi);
+}
+
+size_t x128_clz(x128 x)
+{
+    size_t lo = CountLeadingZerosSafeU64(x.lo);
+    size_t hi = CountLeadingZerosSafeU64(x.hi);
+
+    size_t r = lo + hi;
+    return hi == 64 ? r : hi;
+}
+
+size_t x128_ctz(x128 x)
+{
+    size_t lo = CountTrailingZerosU64(x.lo);
+    size_t hi = CountTrailingZerosU64(x.hi);
+
+    size_t r = lo + hi;
+    return lo == 64 ? r : lo;
+}
+
+size_t x128_popcnt(x128 x)
+{
+#if ARCH_ARM64
+
+    uint64x2_t v = vcombine_u64(vcreate_u64(x.lo), vcreate_u64(x.hi));
+    uint8x16_t r = vcntq_u8(vreinterpretq_u8_u64(v));
+    return vaddvq_u8(r);
+
+#else
+
+    // Chapter 5. Counting Bits from "Hacker's Delight"
+    // or https://nimrod.blog/posts/algorithms-behind-popcount/
+
+    const uint64_t k1 = 0x5555555555555555;
+    const uint64_t k2 = 0x3333333333333333;
+    const uint64_t k3 = 0x0f0f0f0f0f0f0f0f;
+    const uint64_t k4 = 0x0101010101010101;
+
+    uint64_t lo = x.lo;
+    lo -= (lo >> 1) & k1;
+    lo = (lo & k2) + ((lo >> 2) & k2);
+    lo = (lo + (lo >> 4)) & k3;
+    lo = (lo * k4) >> 56;
+
+    uint64_t hi = x.hi;
+    hi -= (hi >> 1) & k1;
+    hi = (hi & k2) + ((hi >> 2) & k2);
+    hi = (hi + (hi >> 4)) & k3;
+    hi = (hi * k4) >> 56;
+
+    return lo + hi;
+
+#endif
+}
+
+x128 x128_abs(x128 x)
+{
+    bool neg = x128_is_neg(x);
+    x128 xn = x128_neg(x);
+    x.lo = neg ? xn.lo : x.lo;
+    x.hi = neg ? xn.hi : x.hi;
+    return x;
+}
+
+x128 x128_neg(x128 x)
+{
+    return x128_sub(x128_zero(), x);
+}
+
+x128 x128_add(x128 a, x128 b)
+{
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(a) + VICLIB_X128_FULL_U(b);
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    unsigned char carry = 0;
+    carry = _addcarry_u64(carry, a.lo, b.lo, &lo);
+    carry = _addcarry_u64(carry, a.hi, b.hi, &hi);
+    (void)carry;
+
+#else
+
+    lo = a.lo + b.lo;
+    hi = a.hi + b.hi + (lo < a.lo);
+
+#endif
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_sub(x128 a, x128 b)
+{
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(a) - VICLIB_X128_FULL_U(b);
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    unsigned char carry = 0;
+    carry = _subborrow_u64(carry, a.lo, b.lo, &lo);
+    carry = _subborrow_u64(carry, a.hi, b.hi, &hi);
+    (void)carry;
+
+#else
+
+    lo = a.lo - b.lo;
+    hi = a.hi - b.hi - (a.lo < b.lo);
+
+#endif
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_mul_128x64(x128 a, uint64_t b)
+{
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(a) * b;
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    lo = _umul128(a.lo, b, &hi);
+    hi += a.hi * b;
+
+#elif COMPILER_CL && ARCH_ARM64
+
+    lo = a.lo * b;
+    hi = __umulh(a.lo, b);
+    hi += a.hi * b;
+
+#else
+
+    uint64_t a0 = (uint32_t)(a.lo >>  0);
+    uint64_t a1 = (uint32_t)(a.lo >> 32);
+    uint64_t a2 = (uint32_t)(a.hi >>  0);
+    uint64_t a3 = (uint32_t)(a.hi >> 32);
+
+    uint64_t b0 = (uint32_t)(b >>  0);
+    uint64_t b1 = (uint32_t)(b >> 32);
+
+    uint64_t r0, r1, r2, r3;
+
+    //     a3 a2 a1 a0
+    //           b1 b0
+    //  --------------
+    //           a0*b0
+    //        a1*b0
+    //     a2*b0
+    //  a3*b0
+    //        a0*b1
+    //     a1*b1
+    //  a2*b1
+    //  --------------
+    //     r3 r2 r1 r0
+
+    r0 = a0 * b0;
+    r1 = a1 * b0 + (r0 >> 32);
+    r2 = a2 * b0 + (r1 >> 32);
+    r3 = a3 * b0 + (r2 >> 32);
+    r0 = (uint32_t)r0;
+    r1 = (uint32_t)r1;
+    r2 = (uint32_t)r2;
+
+    r1 += a0 * b1;
+    r2 += a1 * b1 + (r1 >> 32);
+    r3 += a2 * b1 + (r2 >> 32);
+    r1 = (uint32_t)r1;
+    r2 = (uint32_t)r2;
+
+    lo = r0 | (r1 << 32);
+    hi = r2 | (r3 << 32);
+
+#endif
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_mul_64x64(uint64_t a, uint64_t b)
+{
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = (unsigned __int128)a * b;
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    lo = _umul128(a, b, &hi);
+
+#elif COMPILER_CL && ARCH_ARM64
+
+    lo = a * b;
+    hi = __umulh(a, b);
+
+#else
+
+    uint64_t a0 = (uint32_t)(a >>  0);
+    uint64_t a1 = (uint32_t)(a >> 32);
+
+    uint64_t b0 = (uint32_t)(b >>  0);
+    uint64_t b1 = (uint32_t)(b >> 32);
+
+    uint64_t r0, r1, r2, r3;
+
+    //           a1 a0
+    //           b1 b0
+    //  --------------
+    //           a0*b0
+    //        a1*b0
+    //        a0*b1
+    //     a1*b1
+    //  --------------
+    //     r3 r2 r1 r0
+
+    r0 = a0 * b0;
+    r1 = a1 * b0 + (r0 >> 32);
+    r2 = r1 >> 32;
+    r3 = 0;
+    r0 = (uint32_t)r0;
+    r1 = (uint32_t)r1;
+
+    r1 += a0 * b1;
+    r2 += a1 * b1 + (r1 >> 32);
+    r3 += r2 >> 32;
+    r1 = (uint32_t)r1;
+    r2 = (uint32_t)r2;
+
+    lo = r0 | (r1 << 32);
+    hi = r2 | (r3 << 32);
+
+#endif
+
+    return x128_make(lo, hi);
+}
+
+x128 x128_mul(x128 a, x128 b)
+{
+    uint64_t lo, hi;
+
+#if VICLIB_INT128
+
+    unsigned __int128 r = VICLIB_X128_FULL_U(a) * VICLIB_X128_FULL_U(b);
+    lo = (uint64_t)r;
+    hi = (uint64_t)(r >> 64);
+
+#elif COMPILER_CL && ARCH_X64
+
+    lo = _umul128(a.lo, b.lo, &hi);
+    hi += a.lo * b.hi + a.hi * b.lo;
+
+#elif COMPILER_CL && ARCH_ARM64
+
+    lo = a.lo * b.lo;
+    hi = __umulh(a.lo, b.lo);
+    hi += a.lo * b.hi + a.hi * b.lo;
+
+#else
+
+    uint64_t a0 = (uint32_t)(a.lo >>  0);
+    uint64_t a1 = (uint32_t)(a.lo >> 32);
+    uint64_t a2 = (uint32_t)(a.hi >>  0);
+    uint64_t a3 = (uint32_t)(a.hi >> 32);
+
+    uint64_t b0 = (uint32_t)(b.lo >>  0);
+    uint64_t b1 = (uint32_t)(b.lo >> 32);
+    uint64_t b2 = (uint32_t)(b.hi >>  0);
+    uint64_t b3 = (uint32_t)(b.hi >> 32);
+
+    uint64_t r0, r1, r2, r3;
+
+    //     a3 a2 a1 a0
+    //     b3 b2 b1 b0
+    //  --------------
+    //           a0*b0
+    //        a1*b0
+    //     a2*b0
+    //  a3*b0
+    //        a0*b1
+    //     a1*b1
+    //  a2*b1
+    //     a0*b2
+    //  a1*b2
+    //  a0*b3
+    //  --------------
+    //     r3 r2 r1 r0
+
+    r0 = a0 * b0;
+    r1 = a1 * b0 + (r0 >> 32);
+    r2 = a2 * b0 + (r1 >> 32);
+    r3 = a3 * b0 + (r2 >> 32);
+    r0 = (uint32_t)r0;
+    r1 = (uint32_t)r1;
+    r2 = (uint32_t)r2;
+
+    r1 += a0 * b1;
+    r2 += a1 * b1 + (r1 >> 32);
+    r3 += a2 * b1 + (r2 >> 32);
+    r1 = (uint32_t)r1;
+    r2 = (uint32_t)r2;
+
+    r2 += a0 * b2;
+    r3 += a1 * b2 + (r2 >> 32);
+    r2 = (uint32_t)r2;
+
+    r3 += a0 * b3;
+
+    lo = r0 | (r1 << 32);
+    hi = r2 | (r3 << 32);
+
+#endif
+
+    return x128_make(lo, hi);
+}
+
+static inline uint64_t x128__reciprocal_2by1(uint64_t d)
+{
+    // Algorithm 2 from "Improved division by invariant integers"
+    // https://gmplib.org/~tege/division-paper.pdf
+
+    // d must have top bit set
+
+#if ARCH_X64 && COMPILER_CL
+
+    uint64_t r;
+    uint64_t v4 = _udiv128(~0ULL - d, ~0ULL, d, &r);
+
+#elif ARCH_X64 && (COMPILER_CLANG || COMPILER_GCC)
+
+    uint64_t lo = ~0ULL;
+    uint64_t hi = ~0ULL - d;
+
+    uint64_t v4;
+    __asm__ __volatile__("divq %3" : "=a"(v4), "+d"(hi) : "0"(lo), "r"(d) : "cc");
+
+#else
+
+    uint64_t d0  = d & 1;                                                           // (1)
+    uint64_t d9  = d >> 55;                                                         // (2)
+    uint64_t d40 = (d >> 24) + 1;                                                   // (3)
+    uint64_t d63 = (d + 1) >> 1;                                                    // (4)
+
+    // 11 bits
+    uint64_t v0 = ((1U<<19) - (3U<<8)) / (uint32_t)d9;                              // (5)
+
+    // 21 bits
+    uint64_t v1 = (v0 << 11) - ((v0 * v0 * d40) >> 40) - 1;                         // (6)
+
+    // 34 bits
+    uint64_t v2 = (v1 << 13) + ((v1 * ((1ULL<<60) - v1*d40)) >> 47);                // (7)
+
+    // 2^96 - v2*d63 + (v2/2)*d0
+    uint64_t e = 0ULL - v2 * d63 + (v2 >> 1) * d0;                                  // (8)
+
+    //   2^31*v2 + 2^-65 * v2*e
+    // = 2^31*v2 + (2^-64 * v2*e) >> 1
+    // = 2^31*v2 + mul_64x64(v2, e).hi >> 1 
+    uint64_t v3 = (v2 << 31) + (x128_mul_64x64(v2, e).hi >> 1);                     // (9)
+
+    //   v3 - (2^-64 * (v3 + 2^64 + 1) * d)
+    // = v3 - (2^-64 * (v3 * d + 2^64 * d + d))
+    // = v3 - (2^-64 * (mul_64x64(v3,d) + d) + d)
+    // = v3 - (mul_64x64(v3,d) + d).hi + d)
+    uint64_t v4 = v3 - ((x128_add(x128_mul_64x64(v3, d), x128_set_u64(d))).hi + d); // (10)
+
+#endif
+
+    return v4;
+}
+
+#ifndef X128_TEST_MARKER
+#define X128_TEST_MARKER(...)
+#endif
+
+static inline uint64_t x128__reciprocal_3by2(x128 d)
+{
+    // Algorithm 6 from "Improved division by invariant integers"
+    // https://gmplib.org/~tege/division-paper.pdf
+
+    // d must have top bit set
+
+    X128_TEST_MARKER(0)
+
+    uint64_t v = x128__reciprocal_2by1(d.hi);                         // (1)
+
+    uint64_t p = d.hi * v;                                            // (2)
+    p += d.lo;                                                        // (3)
+
+    int cmp1 = (p < d.lo) & (p >= d.hi);                              // (4) and (6)
+    if (p < d.lo)                                                     // (4)
+    {
+        X128_TEST_MARKER(1)
+    }
+    {
+        v -= (p < d.lo);                                              // (5)
+        if (cmp1)                                                     // (6)
+        {
+            X128_TEST_MARKER(2)
+        }
+        v -= cmp1;                                                    // (7)
+        p -= cmp1 ? d.hi : 0;                                         // (8)
+        p -= d.hi;                                                    // (9)
+    }
+
+    x128 t = x128_mul_64x64(v, d.lo);                                 // (10)
+    p += t.hi;                                                        // (11)
+
+    int cmp2 = (p < t.hi) & (x128_cmp_u(x128_make(t.lo, p), d) >= 0); // (12) and (14)
+    if (p < t.hi)                                                     // (12)
+    {
+        X128_TEST_MARKER(3)
+    }
+    {
+        X128_TEST_MARKER(3)
+        v -= (p < t.hi);                                              // (13)
+        if (cmp2)                                                     // (14)
+        {
+            X128_TEST_MARKER(4)
+        }
+        v -= cmp2;                                                    // (15)
+    }
+
+    return v;
+}
+
+static inline uint64_t x128__div_2by1(uint64_t u0, uint64_t u1, uint64_t d, uint64_t v, uint64_t* rem)
+{
+    // Algorithm 4 from "Improved division by invariant integers"
+    // https://gmplib.org/~tege/division-paper.pdf
+
+    X128_TEST_MARKER(5)
+    
+    x128 q = x128_mul_64x64(v, u1);     // (1)
+    q = x128_add(q, x128_make(u0, u1)); // (2)
+
+    q.hi += 1;                          // (3)
+
+    uint64_t r = u0 - (q.hi * d);       // (4)
+
+    if (r > q.lo)                       // (5)
+    {
+        X128_TEST_MARKER(6)
+        q.hi -= 1;                      // (6)
+    }
+    // having this outside of "if" generates branchless code on MSVC
+    r += (r > q.lo) ? d : 0;            // (7)
+
+    if (r >= d)                         // (8)
+    {
+        X128_TEST_MARKER(7)
+        q.hi += 1;                      // (9)
+        r -= d;                         // (10)
+    }
+
+    *rem = r;
+    return q.hi;
+}
+
+static inline uint64_t x128__div_3by2(uint64_t u0, uint64_t u1, uint64_t u2, x128 d, uint64_t v, x128* rem)
+{
+    // Algorithm 5 from "Improved division by invariant integers"
+    // https://gmplib.org/~tege/division-paper.pdf
+
+    X128_TEST_MARKER(8)
+
+    x128 q = x128_mul_64x64(v, u2);                       // (1)
+    q = x128_add(q, x128_make(u1, u2));                   // (2)
+
+    uint64_t r1 = u1 - (q.hi * d.hi);                     // (3)
+
+    x128 t = x128_mul_64x64(d.lo, q.hi);                  // (4)
+    x128 r = x128_sub(x128_sub(x128_make(u0, r1), t), d); // (5)
+
+    q.hi += 1;                                            // (6)
+
+    x128 rd = x128_add(r, d);                             // (9)
+    int cmp1 = (r.hi >= q.lo);
+    if (cmp1)                                             // (7)
+    {
+        X128_TEST_MARKER(9)
+    }
+    q.hi -= cmp1;                                         // (8)
+    // writing r assignemnt this way generates branchless code on MSVC
+    r.lo = cmp1 ? rd.lo : r.lo;                           // (9)
+    r.hi = cmp1 ? rd.hi : r.hi;
+
+    rd = x128_sub(r, d);                                  // (9)
+    int cmp2 = (x128_cmp_u(r, d) >= 0);                   // (10)
+    if (cmp2)
+    {
+        X128_TEST_MARKER(10)
+    }
+    q.hi += cmp2;                                         // (11)
+    r.lo = cmp2 ? rd.lo : r.lo;                           // (12)
+    r.hi = cmp2 ? rd.hi : r.hi;
+
+    *rem = r;
+    return q.hi;
+}
+
+bool x128_div_u(x128 x, x128 d, x128* q, x128* r)
+{
+    if (x128_is_zero(d))
+    {
+        // cannot divide by zero
+        *q = *r = x128_zero();
+        return false;
+    }
+
+    if (x128_cmp_u(d, x) > 0)
+    {
+        // if d > x, then q=0, r=x
+        *q = x128_zero();
+        *r = x;
+        return true;
+    }
+
+    if (d.hi == 0) // when d is 64-bit value
+    {
+        size_t shift;
+        uint64_t reciprocal = x128_div_u64_reciprocal(d.lo, &shift);
+        uint64_t rem = x128_div_u64(x, d.lo, reciprocal, shift, q);
+        *r = x128_set_u64(rem);
+        return true;
+    }
+
+    size_t shift = CountLeadingZerosSafeU64(d.hi);
+
+    // x << shift in 192 bits
+    x128 x0 = x128_shl(x, shift);
+    x128 x1 = x128_shl(x128_set_u64(x.hi), shift);
+
+    // d << shift
+    d = x128_shl(d, shift);
+
+    uint64_t reciprocal = x128__reciprocal_3by2(d);
+
+    x128 rem;
+    uint64_t quo = x128__div_3by2(x0.lo, x0.hi, x1.hi, d, reciprocal, &rem);
+
+    *q = x128_set_u64(quo);
+    *r = x128_shr_u(rem, shift);
+    return true;
+}
+
+bool x128_div_s(x128 x, x128 d, x128* q, x128* r)
+{
+    bool xn = x128_is_neg(x);
+    bool dn = x128_is_neg(d);
+
+    x128 qabs, rabs;
+    bool res = x128_div_u(x128_abs(x), x128_abs(d), &qabs, &rabs);
+
+    x128 qabsn = x128_neg(qabs);
+    x128 rabsn = x128_neg(rabs);
+
+    bool qn = (xn != dn);
+    *q = qn ? qabsn : qabs;
+    *r = xn ? rabsn : rabs;
+
+    return res;
+}
+
+uint64_t x128_div_u64_reciprocal(uint64_t d, size_t* shift)
+{
+    // d must be non-zero
+
+    size_t n = CountLeadingZerosSafeU64(d);
+    *shift = n;
+    
+    return x128__reciprocal_2by1(d << n);
+}
+
+uint64_t x128_div_u64(x128 x, uint64_t d, uint64_t reciprocal, size_t shift, x128* q)
+{
+    // x << shift in 192 bits
+    x128 x0 = x128_shl(x, shift);
+    x128 x1 = x128_shl(x128_set_u64(x.hi), shift);
+
+    d <<= shift;
+
+    // 2 iterations of Algorithm 7 from "Improved division by invariant integers"
+    // https://gmplib.org/~tege/division-paper.pdf
+
+    uint64_t rem;
+    uint64_t qhi = x128__div_2by1(x0.hi, x1.hi, d, reciprocal, &rem);
+    uint64_t qlo = x128__div_2by1(x0.lo,   rem, d, reciprocal, &rem);
+
+    *q = x128_make(qlo, qhi);
+    return rem >> shift;
+}
+
+////////////////////////////////
+
+uint32_t CountLeadingZerosU32(uint32_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return __builtin_clz(val);
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanReverse(&idx, val);
+    return idx ^ 31;
+#else
+    for(uint32_t i = 0; i < 32; i++) {
+        if((val & (1 << (31 - i))) != 0) return i;
+    }
+    return 32;
+#endif
+}
+
+uint32_t CountLeadingZerosU64(uint64_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return __builtin_clzll(val);
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanReverse64(&idx, val);
+    return idx ^ 63;
+#else
+    for(uint32_t i = 0; i < 64; i++) {
+        if((val & (1 << (63 - i))) != 0) return i;
+    }
+    return 64;
+#endif
+}
+
+uint32_t CountTrailingZerosU32(uint32_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return __builtin_ctz(val);
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanForward(&idx, val);
+    return idx;
+#else
+    for(uint32_t i = 0; i < 32; i++) {
+        if((val & (1 << i)) != 0) return i;
+    }
+    return 32;
+#endif
+}
+
+uint32_t CountTrailingZerosU64(uint64_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return __builtin_ctzll(val);
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanForward64(&idx, val);
+    return idx;
+#else
+    for(uint32_t i = 0; i < 64; i++) {
+        if((val & (1 << i)) != 0) return i;
+    }
+    return 64;
+#endif
+}
+
+uint32_t CountLeadingZerosSafeU32(uint32_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return val ? __builtin_clz(val) : 32;
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanReverse(&idx, val);
+    return val ? idx ^ 31 : 32;
+#else
+    for(uint32_t i = 0; i < 32; i++) {
+        if((val & (1 << (31 - i))) != 0) return i;
+    }
+    return 32;
+#endif
+}
+
+uint32_t CountLeadingZerosSafeU64(uint64_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return val ? __builtin_clzll(val) : 64;
+#elif COMPILER_CL
+    DWORD idx = 0;
+    _BitScanReverse64(&idx, val);
+    return val ? idx ^ 63 : 64;
+#else
+    for(uint32_t i = 0; i < 64; i++) {
+        if((val & (1 << (63 - i))) != 0) return i;
+    }
+    return 64;
+#endif
+}
+
+uint32_t CountTrailingZerosSafeU32(uint32_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return val ? __builtin_ctz(val) : 32;
+#elif COMPILER_CL
+    DWORD idx = 0;
+    return _BitScanForward(&idx, val) ? idx : 32;
+#else
+    for(uint32_t i = 0; i < 32; i++) {
+        if((val & (1 << i)) != 0) return i;
+    }
+    return 32;
+#endif
+}
+
+uint32_t CountTrailingZerosSafeU64(uint64_t val)
+{
+#if COMPILER_GCC || COMPILER_CLANG || COMPILER_TCC
+    return val ? __builtin_ctzll(val) : 64;
+#elif COMPILER_CL
+    DWORD idx = 0;
+    return _BitScanForward64(&idx, val) ? idx : 64;
+#else
+    for(uint32_t i = 0; i < 64; i++) {
+        if((val & (1 << i)) != 0) return i;
+    }
+    return 64;
+#endif
+}
+
 #endif //VICLIB_H

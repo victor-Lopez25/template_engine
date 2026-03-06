@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     vl_cmd cmd = {0};
     VL_CopyDirectoryRecursively("dependencies", "bin");
     VL_cc(&cmd);
-    cmd_Append(&cmd, "../src/main.c", "-I", "../include");
+    CmdAppend(&cmd, "../src/main.c", "-I", "../include");
     VL_ccOutput(&cmd, "template" VL_EXE_EXTENSION);
     VL_ccWarnings(&cmd);
     if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
@@ -36,7 +36,7 @@ int main(int argc, char **argv)
 #endif
 #if defined(_MSC_VER)
     // link flags
-    cmd_Append(&cmd, "-incremental:no", "-opt:ref", "/subsystem:console");
+    CmdAppend(&cmd, "-incremental:no", "-opt:ref", "/subsystem:console");
 #endif
     VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     if(!CmdRun(&cmd)) return 1;
 
     if(shouldrun) {
-        cmd_Append(&cmd, "./template");
+        CmdAppend(&cmd, "./template");
         if(!CmdRun(&cmd)) return 1;
     }
     VL_Popd();
