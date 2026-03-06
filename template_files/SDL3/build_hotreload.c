@@ -85,30 +85,34 @@ bool ProgramAlreadyRunning(const char *program)
 
 bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 {
-    VL_cc(cmd);
-    CmdAppend(cmd, "../src/app.c", "-I", "../include");
-    VL_ccOutput(cmd, "app" VL_DLL_EXT);
-    VL_ccWarnings(cmd);
-    if(warningsAsErrors) VL_ccWarningsAsErrors(cmd);
-
+    vl_compile_ctx ctx = {
+        .type = Compile_DynamicLibrary,
+        .debug = false,
+        .gcSections = true,
+        .warnings = true,
+        .warningsAsErrors = warningsAsErrors,
+        .sourceFiles = VL_GetDaStrSlice("../src/app.c"),
+        .outputPath = "app",
+        .includePaths = VL_GetDaStrSlice("../include"),
 #if defined(_WIN32)
-    VL_ccLibpath(cmd, "../lib"); // also appends "/link" with msvc
+        .libPaths = VL_GetDaStrSlice("../lib"),
 #endif
+        .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
+    };
 
+    VL_SetupCCompile(cmd, &ctx);
 #if defined(_MSC_VER)
-    CmdAppend(cmd, "/DLL", "-incremental:no", "-opt:ref", "/subsystem:console");
-#else
-    CmdAppend(cmd, "-shared");
+    CmdAppend(cmd, "/subsystem:console");
 #endif
-
-    VL_ccLibs(cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
 #if defined(_MSC_VER)
 # define LOCK_FILE_NAME "lock.tmp"
     char pdb_lock_str[] = "PDBSHIT";
     WriteEntireFile(LOCK_FILE_NAME, pdb_lock_str, sizeof(pdb_lock_str));
 #endif
+
     if(!CmdRun(cmd)) return false;
+
 #if defined(_MSC_VER)
     VL_DeleteFile(LOCK_FILE_NAME);
 #endif
@@ -150,28 +154,33 @@ int main(int argc, char **argv)
         MkdirIfNotExist("hotreload");
         // Done since we're not going to rerun the program
         if(ProgramAlreadyRunning(EXE_NAME VL_EXE_EXTENSION)) return 0;
-        VL_cc(&cmd);
-        CmdAppend(&cmd, "../src/main_hot_reload.c");
-        VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
-        VL_ccWarnings(&cmd);
-        if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
-#if defined(_MSC_VER)
-        CmdAppend(&cmd, "/link", "-incremental:no", "-opt:ref");
-#endif
+
+        vl_compile_ctx ctx = {
+            .debug = false,
+            .gcSections = true,
+            .warnings = true,
+            .warningsAsErrors = warningsAsErrors,
+            .sourceFiles = VL_GetDaStrSlice("../src/main_hot_reload.c"),
+            .outputPath = EXE_NAME,
+        };
+        VL_SetupCCompile(&cmd, &ctx);
         if(!CmdRun(&cmd)) return 1;
     } else {
-        VL_cc(&cmd);
-        CmdAppend(&cmd, "../src/main_no_hot_reload.c", "-I", "../include");
-        VL_ccOutput(&cmd, EXE_NAME VL_EXE_EXTENSION);
-        VL_ccWarnings(&cmd);
-        if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
-        VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
+        vl_compile_ctx ctx = {
+            .debug = false,
+            .gcSections = true,
+            .warnings = true,
+            .warningsAsErrors = warningsAsErrors,
+            .sourceFiles = VL_GetDaStrSlice("../src/main_no_hot_reload.c"),
+            .outputPath = EXE_NAME,
+            .includePaths = VL_GetDaStrSlice("../include"),
+            .extraCompilerFlags = VL_GetDaStrSlice("-DSHADER_DIRECTORY=\"shaders/\""),
 #if defined(_WIN32)
-        VL_ccLibpath(&cmd, "../lib");
+            .libPaths = VL_GetDaStrSlice("../lib"),
 #endif
-#if defined(_MSC_VER)
-        CmdAppend(&cmd, "-incremental:no", "-opt:ref");
-#endif
+            .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
+        };
+        VL_SetupCCompile(&cmd, &ctx);
         if(!CmdRun(&cmd)) return 1;
     }
 

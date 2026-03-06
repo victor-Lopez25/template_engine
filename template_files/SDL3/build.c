@@ -25,20 +25,25 @@ int main(int argc, char **argv)
 
     vl_cmd cmd = {0};
     VL_CopyDirectoryRecursively("dependencies", "bin");
-    VL_cc(&cmd);
-    CmdAppend(&cmd, "../src/main.c", "-I", "../include");
-    VL_ccOutput(&cmd, "template" VL_EXE_EXTENSION);
-    VL_ccWarnings(&cmd);
-    if(warningsAsErrors) VL_ccWarningsAsErrors(&cmd);
 
+    vl_compile_ctx ctx = {
+        .debug = false,
+        .gcSections = true,
+        .warnings = true,
+        .warningsAsErrors = warningsAsErrors,
+        .sourceFiles = VL_GetDaStrSlice("../src/main.c"),
+        .outputPath = "template",
+        .includePaths = VL_GetDaStrSlice("../include"),
 #if defined(_WIN32)
-    VL_ccLibpath(&cmd, "../lib");
+        .libPaths = VL_GetDaStrSlice("../lib"),
 #endif
+        .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
+    };
+
+    VL_SetupCCompile(&cmd, &ctx);
 #if defined(_MSC_VER)
-    // link flags
-    CmdAppend(&cmd, "-incremental:no", "-opt:ref", "/subsystem:console");
+    CmdAppend(&cmd, "/subsystem:console");
 #endif
-    VL_ccLibs(&cmd, "SDL3", "SDL3_ttf", "SDL3_image");
 
     MkdirIfNotExist("bin");
     VL_Pushd("bin");
