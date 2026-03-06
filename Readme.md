@@ -24,7 +24,7 @@ cd template
 ../template_engine SDL-hotreload
 # after compiling build.c once, you can run build and it'll compile itself if needed
 cc build.c -o build
-build
+./build
 ```
 if on windows, add '.exe' to executables and use any c compiler, 'gcc', 'clang', or 'cl' instead of 'cc'
 
