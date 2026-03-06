@@ -106,7 +106,7 @@ bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
 #if defined(_MSC_VER)
 # define LOCK_FILE_NAME "lock.tmp"
     char pdb_lock_str[] = "PDBSHIT";
-    VL_WriteEntireFile(LOCK_FILE_NAME, pdb_lock_str, sizeof(pdb_lock_str));
+    WriteEntireFile(LOCK_FILE_NAME, pdb_lock_str, sizeof(pdb_lock_str));
 #endif
     if(!CmdRun(cmd)) return false;
 #if defined(_MSC_VER)
