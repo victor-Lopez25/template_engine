@@ -83,24 +83,24 @@ bool ProgramAlreadyRunning(const char *program)
 }
 #endif
 
-bool CompileApp(vl_cmd *cmd, bool warningsAsErrors)
-{
-    vl_compile_ctx ctx = {
-        .type = Compile_DynamicLibrary,
-        .debug = false,
-        .gcSections = true,
-        .warnings = true,
-        .warningsAsErrors = warningsAsErrors,
-        .sourceFiles = VL_GetDaStrSlice("../src/app.c"),
-        .outputPath = "app",
-        .includePaths = VL_GetDaStrSlice("../include"),
+vl_compile_ctx app_ctx = {
+    .type = Compile_DynamicLibrary,
+    .debug = false,
+    .gcSections = true,
+    .warnings = true,
+    .includePaths = VL_GetDaStrSlice("../include"),
 #if defined(_WIN32)
-        .libPaths = VL_GetDaStrSlice("../lib"),
+    .libPaths = VL_GetDaStrSlice("../lib"),
 #endif
-        .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
-    };
+    .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
+};
 
-    VL_SetupCCompile(cmd, &ctx);
+bool CompileApp(vl_cmd *cmd)
+{
+    app_ctx.type = Compile_DynamicLibrary;
+    app_ctx.sourceFiles = (vl_file_paths)VL_GetDaStrSlice("../src/app.c");
+    app_ctx.outputPath = "app";
+    VL_SetupCCompile(cmd, &app_ctx);
 #if defined(_MSC_VER)
     CmdAppend(cmd, "/subsystem:console");
 #endif
@@ -143,12 +143,13 @@ int main(int argc, char **argv)
             warningsAsErrors = true;
         }
     }
+    app_ctx.warningsAsErrors = warningsAsErrors;
 
     VL_CopyDirectoryRecursively("dependencies", "bin");
     VL_Pushd("bin");
 
     vl_cmd cmd = {0};
-    if(!CompileApp(&cmd, warningsAsErrors)) return 1;
+    if(!CompileApp(&cmd)) return 1;
 
     if(hotreload) {
         MkdirIfNotExist("hotreload");
@@ -166,21 +167,10 @@ int main(int argc, char **argv)
         VL_SetupCCompile(&cmd, &ctx);
         if(!CmdRun(&cmd)) return 1;
     } else {
-        vl_compile_ctx ctx = {
-            .debug = false,
-            .gcSections = true,
-            .warnings = true,
-            .warningsAsErrors = warningsAsErrors,
-            .sourceFiles = VL_GetDaStrSlice("../src/main_no_hot_reload.c"),
-            .outputPath = EXE_NAME,
-            .includePaths = VL_GetDaStrSlice("../include"),
-            .extraCompilerFlags = VL_GetDaStrSlice("-DSHADER_DIRECTORY=\"shaders/\""),
-#if defined(_WIN32)
-            .libPaths = VL_GetDaStrSlice("../lib"),
-#endif
-            .libs = VL_GetDaStrSlice("SDL3", "SDL3_ttf", "SDL3_image"),
-        };
-        VL_SetupCCompile(&cmd, &ctx);
+        app_ctx.type = Compile_Executable;
+        app_ctx.outputPath = EXE_NAME;
+        app_ctx.sourceFiles = (vl_file_paths)VL_GetDaStrSlice("../src/main_no_hot_reload.c");
+        VL_SetupCCompile(&cmd, &app_ctx);
         if(!CmdRun(&cmd)) return 1;
     }
 
