@@ -1,83 +1,14 @@
-#include <SDL3/SDL.h>
 #include <SDL3/SDL_ttf.h>
 #include <SDL3/SDL_image.h>
+
+#include "sdl_common.h"
+#include "sdl_common.c"
 
 #include "spall.h"
 
 #ifndef DLL_EXPORT
 # define DLL_EXPORT __declspec(dllexport)
 #endif
-
-#define Spall_BufferBegin(ctx, buf, name) spall_buffer_begin(ctx, buf, name, (int32_t)SDL_strlen(name), SDL_GetTicksNS())
-#define Spall_BufferEnd(ctx, buf) spall_buffer_end(ctx, buf, SDL_GetTicksNS())
-
-typedef enum {
-    TargetFPSMissed_Regular, // No specific reason - must log since this shouldn't happen regularly
-    //TargetFPSMissed_Init, // First frame
-    TargetFPSMissed_End, // Last frame
-    TargetFPSMissed_Irrelevant, // Anything below this doesn't need to be logged
-    TargetFPSMissed_WindowResize,
-    TargetFPSMissed_WindowMove,
-    TargetFPSMissed_WindowFocus,
-} TargetFPSMissedCauses;
-
-const char *GetTargetFPSCauseString(int cause) {
-    switch(cause) {
-        case TargetFPSMissed_Regular: return "Performance";
-        case TargetFPSMissed_End: return "Last frame before window closes";
-        case TargetFPSMissed_Irrelevant: return "Irrelevant";
-        case TargetFPSMissed_WindowFocus: return "Window Focus";
-        case TargetFPSMissed_WindowResize: return "Window Resize";
-        case TargetFPSMissed_WindowMove: return "Window Move";
-        default: return "Unknown value";
-    }
-}
-
-typedef int (*ThreadWorkCallback)(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, void *data);
-
-typedef struct {
-    ThreadWorkCallback callback;
-    void *data;
-} WorkQueueEntry;
-
-typedef struct {
-    SDL_AtomicInt completionGoal;
-    SDL_AtomicInt completionCount;
-    volatile Uint32 nextEntryToWrite;
-    SDL_AtomicInt nextEntryToRead;
-    SDL_Semaphore *semaphore;
-
-    WorkQueueEntry entries[256];
-
-    Uint32 threadCount;
-    SDL_Thread **threads;
-
-    SpallProfile *spall_ctx;
-    SpallBuffer *spall_buffers;
-} WorkQueue;
-
-typedef struct {
-  bool down;
-  bool up;
-  bool pressed;
-  bool released;
-} InputButton;
-
-typedef struct {
-  bool keyDown[0xFFF];
-  bool keyUp[0xFFF];
-  bool keyPressed[0xFFF];
-  bool keyReleased[0xFFF];
-  // any other keys with SDLK_xyz > 0xFFF
-
-  InputButton mouseLeft;
-  InputButton mouseMiddle;
-  InputButton mouseRight;
-  InputButton mouseX1;
-  InputButton mouseX2;
-  float mouseX, mouseY;
-  float mouseWheelX, mouseWheelY;
-} ProgramInput;
 
 typedef struct {
     ProgramInput input;
@@ -99,7 +30,7 @@ typedef struct {
 
 DLL_EXPORT size_t MemorySize(void) { return sizeof(ProgramContext); }
 
-void RenderAll(ProgramContext *ctx);
+void AppRender(ProgramContext *ctx);
 
 bool FilterSDL3Events(void *userdata, SDL_Event *event)
 {
@@ -109,14 +40,14 @@ bool FilterSDL3Events(void *userdata, SDL_Event *event)
         case SDL_EVENT_WINDOW_RESIZED: {
             ctx->windowWidth = event->window.data1;
             ctx->windowHeight = event->window.data2;
-            RenderAll(ctx);
+            AppRender(ctx);
             SDL_SetAtomicInt(&ctx->targetFPSMissedCause, TargetFPSMissed_WindowResize);
             return false;
         }
 
         // Moved to event->window. data1xdata2
         case SDL_EVENT_WINDOW_MOVED: {
-            RenderAll(ctx);
+            AppRender(ctx);
             SDL_SetAtomicInt(&ctx->targetFPSMissedCause, TargetFPSMissed_WindowMove);
             return false;
         }
@@ -130,124 +61,14 @@ bool FilterSDL3Events(void *userdata, SDL_Event *event)
 }
 
 //////////////////////////////////////////////////////////
-// work queue stuff
 
-void AddWorkEntry(WorkQueue *queue, ThreadWorkCallback callback, void *data)
+DLL_EXPORT bool AppInitPartial(void *rawdata)
 {
-    Uint32 nextEntryToWrite = (queue->nextEntryToWrite + 1) % SDL_arraysize(queue->entries);
-    // TODO: If this is the case, the work queue should be larger/resizable
-    SDL_assert((int)nextEntryToWrite != SDL_GetAtomicInt(&queue->nextEntryToRead));
-    WorkQueueEntry *entry = &queue->entries[queue->nextEntryToWrite];
-    entry->callback = callback;
-    entry->data = data;
-    SDL_AddAtomicInt(&queue->completionGoal, 1);
-    SDL_CompilerBarrier();
-    queue->nextEntryToWrite = nextEntryToWrite;
-    SDL_SignalSemaphore(queue->semaphore);
-}
-
-bool DoNextWorkEntry(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQueue *queue)
-{
-    bool shouldSleep = false;
-
-    Uint32 originalNextEntryToRead = SDL_GetAtomicInt(&queue->nextEntryToRead);
-    Uint32 nextEntryToRead = (originalNextEntryToRead + 1) % SDL_arraysize(queue->entries);
-    if(originalNextEntryToRead != queue->nextEntryToWrite) {
-        if(SDL_CompareAndSwapAtomicInt(&queue->nextEntryToRead, originalNextEntryToRead, nextEntryToRead)) {
-            WorkQueueEntry *entry = &queue->entries[originalNextEntryToRead];
-            entry->callback(spall_ctx, spall_buffer, entry->data);
-            SDL_AddAtomicInt(&queue->completionCount, 1);
-        }
-    } else {
-        shouldSleep = true;
-    }
-
-    return shouldSleep;
-}
-
-void CompleteAllWorkerEntries(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, WorkQueue *queue)
-{
-    while(SDL_GetAtomicInt(&queue->completionGoal) != SDL_GetAtomicInt(&queue->completionCount)) {
-        DoNextWorkEntry(spall_ctx, spall_buffer, queue);
-    }
-
-    SDL_SetAtomicInt(&queue->completionGoal, 0);
-    SDL_SetAtomicInt(&queue->completionCount, 0);
-}
-
-typedef struct {
-    WorkQueue *queue;
-    int threadIdx;
-} ThreadData;
-
-int SDLCALL ThreadProc(void *data)
-{
-    ThreadData *tdata = (ThreadData*)data;
-    WorkQueue *queue = tdata->queue;
-    int threadIdx = tdata->threadIdx;
-    SDL_free(data);
-    
-    for(;;) {
-        if(DoNextWorkEntry(queue->spall_ctx, &queue->spall_buffers[threadIdx], queue)) {
-            SDL_WaitSemaphore(queue->semaphore);
-        }
-    }
-
-    // NOTE: This doesn't return
-    //return 0;
-}
-
-bool InitWorkQueue(SpallProfile *spall_ctx, WorkQueue *queue, Uint32 threadCount)
-{
-    SDL_SetAtomicInt(&queue->completionGoal, 0);
-    SDL_SetAtomicInt(&queue->completionCount, 0);
-
-    queue->nextEntryToWrite = 0;
-    SDL_SetAtomicInt(&queue->nextEntryToRead, 0);
-
-    // TODO: Error reporting
-    queue->semaphore = SDL_CreateSemaphore(0);
-    if(!queue->semaphore) return false;
-
-    queue->threads = SDL_malloc(threadCount*sizeof(SDL_Thread*));
-    if(!queue->threads) return false;
-
-    queue->spall_ctx = spall_ctx;
-    queue->spall_buffers = SDL_malloc(threadCount*sizeof(SpallBuffer));
-    if(!queue->spall_buffers) return false;
-
-    Uint8 *backingBuffer = SDL_malloc(threadCount*SPALL_BUFFER_SIZE);
-    if(!backingBuffer) return false;
-
-    queue->threadCount = threadCount;
-    char threadNameBuf[40];
-    for(Uint32 threadIdx = 0; threadIdx < threadCount; threadIdx++) {
-        ThreadData *tdata = SDL_malloc(sizeof(ThreadData));
-        if(!tdata) return false;
-        tdata->queue = queue;
-        tdata->threadIdx = threadIdx;
-
-        queue->spall_buffers[threadIdx].data = backingBuffer + threadIdx*SPALL_BUFFER_SIZE;
-        queue->spall_buffers[threadIdx].length = SPALL_BUFFER_SIZE;
-        queue->spall_buffers[threadIdx].tid = threadIdx + 1; // (uint32_t)SDL_GetThreadID(queue->threads[threadIdx]);
-        if(!spall_buffer_init(spall_ctx, &queue->spall_buffers[threadIdx])) return false;
-
-        SDL_snprintf(threadNameBuf, sizeof(threadNameBuf), "Worker thread %u", threadIdx);
-        queue->threads[threadIdx] = SDL_CreateThread(ThreadProc, threadNameBuf, tdata);
-        if(!queue->threads[threadIdx]) return false;
-    }
-
+    (void)rawdata;
     return true;
 }
 
-//////////////////////////////////////////////////////////
-
-DLL_EXPORT void InitPartial(void *rawdata)
-{
-    (void) rawdata;
-}
-
-DLL_EXPORT bool InitAll(void *rawdata)
+DLL_EXPORT bool AppInit(void *rawdata)
 {
     ProgramContext *ctx = (ProgramContext*)rawdata;
 
@@ -287,30 +108,35 @@ DLL_EXPORT bool InitAll(void *rawdata)
     SDL_GetWindowSize(ctx->window, &ctx->windowWidth, &ctx->windowHeight);
     SDL_SetEventFilter(FilterSDL3Events, ctx);
 
-    SDL_memset4(ctx->input.keyUp, 0x01010101, sizeof(ctx->input.keyUp)/4);
+    SDL_memset4(ctx->input.regularKeyUp, 0x01010101, sizeof(ctx->input.regularKeyUp)/4);
+    SDL_memset4(ctx->input.commandKeyUp, 0x01010101, sizeof(ctx->input.commandKeyUp)/4);
+    SDL_memset4(ctx->input.extendedKeyUp, 0x01010101, sizeof(ctx->input.extendedKeyUp)/4);
     ctx->input.mouseLeft.up = true; ctx->input.mouseMiddle.up = true; ctx->input.mouseRight.up = true;
     ctx->input.mouseX1.up = true; ctx->input.mouseX2.up = true;
 
     ctx->deltaTime = 0.0f;
     ctx->targetFPS = 60.0f;
 
-    bool ok = InitWorkQueue(&ctx->spall_ctx, &ctx->workQueue, 2);
+    if(!InitWorkQueue(&ctx->spall_ctx, &ctx->workQueue, 2)) {
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not init sdl work queue");
+        return false;
+    }
+
+    bool ok = AppInitPartial(rawdata);
 
     Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
-
-    InitPartial(rawdata);
 
     return ok;
 }
 
-DLL_EXPORT void DeInitPartial(void *rawdata)
+DLL_EXPORT void AppDeInitPartial(void *rawdata)
 {
     (void)rawdata;
 }
 
-DLL_EXPORT void DeInitAll(void *rawdata)
+DLL_EXPORT void AppDeInit(void *rawdata)
 {
-    DeInitPartial(rawdata);
+    AppDeInitPartial(rawdata);
 
     ProgramContext *ctx = (ProgramContext*)rawdata;
 
@@ -331,7 +157,7 @@ DLL_EXPORT void DeInitAll(void *rawdata)
     SDL_Quit();
 }
 
-void RenderAll(ProgramContext *ctx)
+void AppRender(ProgramContext *ctx)
 {
     Spall_BufferBegin(&ctx->spall_ctx, &ctx->spall_buffer, __FUNCTION__);
 
@@ -370,7 +196,9 @@ void GetMouseInput(ProgramContext *ctx)
 void ClearInput(ProgramContext *ctx)
 {
     // Clear pressed and released keys
-    SDL_memset4(ctx->input.keyPressed, 0, sizeof(ctx->input.keyPressed)/2);
+    SDL_memset4(ctx->input.regularKeyPressed, 0, sizeof(ctx->input.regularKeyPressed)/2);
+    SDL_memset4(ctx->input.commandKeyPressed, 0, sizeof(ctx->input.commandKeyPressed)/2);
+    SDL_memset4(ctx->input.extendedKeyPressed, 0, sizeof(ctx->input.extendedKeyPressed)/2);
 #define ClearMouseButton(button) \
     button.pressed = false; button.released = false;
     ClearMouseButton(ctx->input.mouseLeft)
@@ -401,20 +229,11 @@ DLL_EXPORT bool MainLoop(void *rawdata)
             } break;
 
             case SDL_EVENT_KEY_DOWN: {
-                if(event.key.key < 0xFFF) {
-                    if(ctx->input.keyUp[event.key.key]) ctx->input.keyPressed[event.key.key] = true;
-                    ctx->input.keyDown[event.key.key] = true;
-                    ctx->input.keyUp[event.key.key] = false;
-                }
-                //SDL_Log("key down: %u", event.key.key);
+                HandleSDLKeyDownEvent(&ctx->input, &event);
             } break;
 
             case SDL_EVENT_KEY_UP: {
-                if(event.key.key < 0xFFF) {
-                    if(ctx->input.keyDown[event.key.key]) ctx->input.keyReleased[event.key.key] = true;
-                    ctx->input.keyUp[event.key.key] = true;
-                    ctx->input.keyDown[event.key.key] = false;
-                }
+                HandleSDLKeyUpEvent(&ctx->input, &event);
             } break;
 
             case SDL_EVENT_MOUSE_WHEEL: {
@@ -427,7 +246,7 @@ DLL_EXPORT bool MainLoop(void *rawdata)
     GetMouseInput(ctx);
     Spall_BufferEnd(&ctx->spall_ctx, &ctx->spall_buffer);
 
-    RenderAll(ctx);
+    AppRender(ctx);
 
     Uint64 targetTicks = (Uint64)(1000000000.0f/ctx->targetFPS);
     Uint64 endTick = SDL_GetTicksNS();

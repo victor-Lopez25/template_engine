@@ -1,81 +1,8 @@
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-
 #include <SDL3/SDL_ttf.h>
 #include <SDL3/SDL_image.h>
 
-#include "spall.h"
-
-#define Spall_BufferBegin(ctx, buf, name) spall_buffer_begin(ctx, buf, name, (int32_t)SDL_strlen(name), SDL_GetTicksNS())
-#define Spall_BufferEnd(ctx, buf) spall_buffer_end(ctx, buf, SDL_GetTicksNS())
-
-typedef enum {
-    TargetFPSMissed_Regular, // No specific reason - must log since this shouldn't happen regularly
-    //TargetFPSMissed_Init, // First frame
-    TargetFPSMissed_End, // Last frame
-    TargetFPSMissed_Irrelevant, // Anything below this doesn't need to be logged
-    TargetFPSMissed_WindowResize,
-    TargetFPSMissed_WindowMove,
-    TargetFPSMissed_WindowFocus,
-} TargetFPSMissedCauses;
-
-const char *GetTargetFPSCauseString(int cause) {
-    switch(cause) {
-        case TargetFPSMissed_Regular: return "Performance";
-        case TargetFPSMissed_End: return "Last frame before window closes";
-        case TargetFPSMissed_Irrelevant: return "Irrelevant";
-        case TargetFPSMissed_WindowFocus: return "Window Focus";
-        case TargetFPSMissed_WindowResize: return "Window Resize";
-        case TargetFPSMissed_WindowMove: return "Window Move";
-        default: return "Unknown value";
-    }
-}
-
-typedef int (*ThreadWorkCallback)(SpallProfile *spall_ctx, SpallBuffer *spall_buffer, void *data);
-
-typedef struct {
-    ThreadWorkCallback callback;
-    void *data;
-} WorkQueueEntry;
-
-typedef struct {
-    SDL_AtomicInt completionGoal;
-    SDL_AtomicInt completionCount;
-    volatile Uint32 nextEntryToWrite;
-    SDL_AtomicInt nextEntryToRead;
-    SDL_Semaphore *semaphore;
-
-    WorkQueueEntry entries[256];
-
-    Uint32 threadCount;
-    SDL_Thread **threads;
-
-    SpallProfile *spall_ctx;
-    SpallBuffer *spall_buffers;
-} WorkQueue;
-
-typedef struct {
-  bool down;
-  bool up;
-  bool pressed;
-  bool released;
-} InputButton;
-
-typedef struct {
-  bool keyDown[0xFFF];
-  bool keyUp[0xFFF];
-  bool keyPressed[0xFFF];
-  bool keyReleased[0xFFF];
-  // any other keys with SDLK_xyz > 0xFFF
-
-  InputButton mouseLeft;
-  InputButton mouseMiddle;
-  InputButton mouseRight;
-  InputButton mouseX1;
-  InputButton mouseX2;
-  float mouseX, mouseY;
-  float mouseWheelX, mouseWheelY;
-} ProgramInput;
+#include "sdl_common.h"
+#include "sdl_common.c"
 
 typedef struct {
     ProgramInput input;

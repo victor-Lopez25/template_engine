@@ -17,7 +17,7 @@ int main(int argc, char **argv)
     }
 
     SDL_memset4(appMemory, 0, MemorySize()/4);
-    if(!InitAll(appMemory)) {
+    if(!AppInit(appMemory)) {
         SDL_free(appMemory);
         return 1;
     }
@@ -27,7 +27,7 @@ int main(int argc, char **argv)
         quit = MainLoop(appMemory);
     }
 
-    DeInitAll(appMemory);
+    AppDeInit(appMemory);
     SDL_free(appMemory);
 
     return 0;

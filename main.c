@@ -117,6 +117,8 @@ void SetupGeneralSDL3Templates_(const char **libs, size_t libcount)
     VL_CopyFile(temp_sprintf("%s/template_files/spall.h", selfPath), "src/spall.h");
     VL_CopyFile(temp_sprintf("%s/viclib.h", selfPath), "src/viclib.h");
     VL_CopyFile(temp_sprintf("%s/vl_build.h", selfPath), "vl_build.h");
+    VL_CopyFile(temp_sprintf("%s/template_files/SDL3/sdl_common.h", selfPath), "src/sdl_common.h");
+    VL_CopyFile(temp_sprintf("%s/template_files/SDL3/sdl_common.c", selfPath), "src/sdl_common.c");
 
     temp_rewind(mark);
 }
@@ -356,10 +358,10 @@ int main(int argc, char **argv)
 #if defined(_WIN32) && defined(SHORTCUT_PATH)
         size_t exe_name_len = strlen(argv[0]);
         if(exe_name_len < 5 || strcmp(argv[0] + exe_name_len - 4, ".exe")) {
-            VL_Log(NOB_ERROR, "Need executable to have '.exe' extension to make a shortcut");
+            VL_Log(VL_ERROR, "Need executable to have '.exe' extension to make a shortcut");
         } else {
             system(temp_sprintf("make_shortcut.bat %.*s "SHORTCUT_PATH, exe_name_len - 4, argv[0]));
-            VL_Log(NOB_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
+            VL_Log(VL_INFO, "Created shortcut in directory: "SHORTCUT_PATH);
         }
 #endif
     }

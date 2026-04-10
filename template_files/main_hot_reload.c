@@ -33,10 +33,10 @@ typedef struct {
     void *library;
 #endif
 
-    BoolVoidStarProc initAll;
-    BoolVoidStarProc initPartial;
-    VoidStarProc deInitAll;
-    VoidStarProc deInitPartial;
+    BoolVoidStarProc appInit;
+    BoolVoidStarProc appInitPartial;
+    VoidStarProc appDeInit;
+    VoidStarProc appDeInitPartial;
     MemorySizeProc memorySize;
     BoolVoidStarProc mainLoop;
 
@@ -61,15 +61,15 @@ bool LoadProgramApi(ProgramApi *api, int version)
 
             api->library = LoadLibraryA(dllname);
             if(api->library) {
-                api->initAll = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "InitAll");
-                api->initPartial = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "InitPartial");
-                api->deInitAll = (VoidStarProc)(void*)GetProcAddress(api->library, "DeInitAll");
-                api->deInitPartial = (VoidStarProc)(void*)GetProcAddress(api->library, "DeInitPartial");
+                api->appInit = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "AppInit");
+                api->appInitPartial = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "AppInitPartial");
+                api->appDeInit = (VoidStarProc)(void*)GetProcAddress(api->library, "AppDeInit");
+                api->appDeInitPartial = (VoidStarProc)(void*)GetProcAddress(api->library, "AppDeInitPartial");
                 
                 api->memorySize = (MemorySizeProc)(void*)GetProcAddress(api->library, "MemorySize");
                 api->mainLoop = (BoolVoidStarProc)(void*)GetProcAddress(api->library, "MainLoop");
 
-                ok = api->initAll && api->initPartial && api->deInitAll && api->deInitPartial && api->memorySize && api->mainLoop;
+                ok = api->appInit && api->appInitPartial && api->appDeInit && api->appDeInitPartial && api->memorySize && api->mainLoop;
 
                 if(ok) api->version = version;
             } else {
@@ -111,15 +111,15 @@ bool LoadProgramApi(ProgramApi *api, int version)
         if(VL_CopyFile(DLL_NAME, dllname, FALSE)) {
             api->library = dlopen(dllname, RTLD_NOW);
             if(api->library) {
-                api->initAll = (BoolVoidStarProc)dlsym(api->library, "InitAll");
-                api->initPartial = (BoolVoidStarProc)dlsym(api->library, "InitPartial");
-                api->deInitAll = (VoidStarProc)dlsym(api->library, "DeInitAll");
-                api->deInitPartial = (VoidStarProc)dlsym(api->library, "DeInitPartial");
+                api->appInit = (BoolVoidStarProc)dlsym(api->library, "AppInit");
+                api->appInitPartial = (BoolVoidStarProc)dlsym(api->library, "AppInitPartial");
+                api->appDeInit = (VoidStarProc)dlsym(api->library, "AppDeInit");
+                api->appDeInitPartial = (VoidStarProc)dlsym(api->library, "AppDeInitPartial");
                 
                 api->memorySize = (MemorySizeProc)dlsym(api->library, "MemorySize");
                 api->mainLoop = (BoolVoidStarProc)dlsym(api->library, "MainLoop");
 
-                ok = api->initAll && api->initPartial && api->deInitAll && api->deInitPartial && api->memorySize && api->mainLoop;
+                ok = api->appInit && api->appInitPartial && api->appDeInit && api->appDeInitPartial && api->memorySize && api->mainLoop;
 
                 if(ok) api->version = version;
             }
@@ -172,7 +172,7 @@ int main(int argc, char **argv)
     }
 
     memset(appMemory, 0, api.memorySize());
-    if(!api.initAll(appMemory)) {
+    if(!api.appInit(appMemory)) {
         free(appMemory);
         UnloadApi(&api);
         return 1;
@@ -189,12 +189,12 @@ int main(int argc, char **argv)
                 if(api.memorySize() == newApi.memorySize()) {
                     // normal hot reload
                     DaAppend(&oldApis, api);
-                    api.deInitPartial(appMemory);
+                    api.appDeInitPartial(appMemory);
                     memcpy(&api, &newApi, sizeof(ProgramApi));
-                    api.initPartial(appMemory);
+                    api.appInitPartial(appMemory);
                 } else {
                     // Full reset since we need a different amount of memory
-                    api.deInitAll(appMemory);
+                    api.appDeInit(appMemory);
 
                     for(size_t apiIdx = 0; apiIdx < oldApis.count; apiIdx++) {
                         UnloadApi(&oldApis.items[apiIdx]);
@@ -209,7 +209,7 @@ int main(int argc, char **argv)
                     }
 
                     memset(appMemory, 0, api.memorySize());
-                    if(!api.initAll(appMemory)) {
+                    if(!api.appInit(appMemory)) {
                         goto endProgram;
                     }
                 }
@@ -221,7 +221,7 @@ int main(int argc, char **argv)
         quit = api.mainLoop(appMemory);
     }
 
-    api.deInitAll(appMemory);
+    api.appDeInit(appMemory);
     free(appMemory);
 
 endProgram:
