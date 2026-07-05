@@ -1,6 +1,6 @@
 /* date = December 29th 2024 10:12 pm
 --Author: Víctor López Cortés
---version: 1.6.1
+--version: 1.7.1
 --Usage:
 Defines: To have any of these take effect, you must define them _before_ including this file
  - VICLIB_IMPLEMENTATION: If you want to have the implementation (only in one file)
@@ -69,6 +69,10 @@ SOFTWARE.
 #ifndef VICLIB_H
 #define VICLIB_H
 
+#if !defined(_WIN32) && !defined(_GNU_SOURCE) 
+# define _GNU_SOURCE
+#endif
+
 #if defined(_WIN32)
 # define OS_WINDOWS 1
 #endif
@@ -128,9 +132,6 @@ SOFTWARE.
 # define __PROC__ __FUNCTION__
 #endif
 
-#if defined(_UNISTD_H_) && defined(_SYS_STAT_H_)
-# define VL_FILE_LINUX
-#endif
 #if !defined(VL_INC_STDLIB_H) && (defined(_STDLIB_H_) || defined(_STDLIB_H) || defined(_INC_STDLIB))
 # define VL_INC_STDLIB_H
 #endif
@@ -150,12 +151,29 @@ SOFTWARE.
 #include <intrin.h>
 #endif
 
+typedef HANDLE vl_proc;
+# define VL_INVALID_PROC INVALID_HANDLE_VALUE
+typedef HANDLE vl_fd;
+# define VL_INVALID_FD INVALID_HANDLE_VALUE
+
+#define WIN32_MAX_FILE_READ_WRITE 1<<30
+#define VL_PATH_MAX MAX_PATH
+
 #elif OS_LINUX
 #include <time.h>
+#include <poll.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+typedef int vl_proc;
+# define VL_INVALID_PROC (-1)
+typedef int vl_fd;
+# define VL_INVALID_FD (-1)
+
+#define LINUX_MAX_FILE_READ_WRITE 1<<30
+#define VL_PATH_MAX PATH_MAX
 
 #elif OS_MAC // I think it works with the same includes as linux for now...?
 #include <time.h>
@@ -163,6 +181,14 @@ SOFTWARE.
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+typedef int vl_proc;
+# define VL_INVALID_PROC (-1)
+typedef int vl_fd;
+# define VL_INVALID_FD (-1)
+
+#define MAC_MAX_FILE_READ_WRITE 1<<30
+#define VL_PATH_MAX PATH_MAX
 
 #else
 #error Unsupported OS
@@ -254,6 +280,22 @@ extern void __cdecl __debugbreak(void);
 # endif
 #endif
 
+#if !defined(__cplusplus)
+# if __STDC_VERSION__ >= 202311L
+#  define StaticAssert(expr, msg) static_assert(expr, msg)
+# elif __STDC_VERSION__ >= 201112L
+#  define StaticAssert(expr, msg) _Static_assert(expr, msg)
+# else
+#  define StaticAssert(expr, msg) \
+  do { \
+    char glue(__ignore__, __LINE__)[(expr)?1:-1]; \
+    (void)glue(__ignore__, __LINE__); \
+  } while(0)
+#endif
+#else
+# define StaticAssert(expr, msg) static_assert(expr, msg)
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -301,6 +343,9 @@ typedef double   f64;
 #  if !defined(QUIET_ASSERT)
 #   define QUIET_ASSERT
 #   pragma message("Warning: Using quiet assert since stdio.h is not included")
+#  endif
+
+#  if defined(QUIET_ASSERT)
 #   define AssertAlways(e) do{ if(!(e)) { DebugBreakpoint; } }while(0)
 #   define AssertMsgAlways(e, msg) AssertAlways(e)
 #  endif
@@ -334,7 +379,7 @@ thread_local error_number_value VL_ErrorNumber = 0;
 #endif
 
 /* bool found = false; 
- * LinearSearch(string_view_array, string_view, view_Eq);
+ * LinearSearch(string_view_array, string_view, ViewEq);
  * if(found) {...}
  * 
  * string_view_array must have count and items attributes
@@ -387,21 +432,34 @@ static inline uint32_t CountTrailingZerosSafeU32(uint32_t val);
 static inline uint32_t CountTrailingZerosSafeU64(uint64_t val);
 
 #if defined(VL_INC_STRING_H)
+/* copy len bytes from src to dst. Undefined behaviour if one contains the other */
 # define mem_copy_non_overlapping(dst, src, len) memcpy(dst, src, len)
+/* copy len bytes from src to dst */
 # define mem_copy(dst, src, len) memmove(dst, src, len)
+/* zero out len bytes from data */
 # define mem_zero(data, len) memset(data, 0, len)
+/* compare str1 and str2. result = str1 - str2 */
 # define mem_compare(str1, str2, count) memcmp(str1, str2, count)
 #elif defined(SDL_h_)
+/* copy len bytes from src to dst. Undefined behaviour if one contains the other */
 # define mem_copy_non_overlapping(dst, src, len) SDL_memcpy(dst, src, len)
+/* copy len bytes from src to dst */
 # define mem_copy(dst, src, len) SDL_memmove(dst, src, len)
+/* zero out len bytes from data */
 # define mem_zero(data, len) SDL_memset(data, 0, len)
+/* compare str1 and str2. result = str1 - str2 */
 # define mem_compare(str1, str2, count) SDL_memcmp(str1, str2, count)
 #else
+/* copy len bytes from src to dst. Undefined behaviour if one contains the other */
 VLIBPROC void mem_copy_non_overlapping(void *dst, const void *src, size_t len);
+/* copy len bytes from src to dst */
 VLIBPROC void mem_copy(void *dst, const void *src, size_t len);
+/* zero out len bytes from data */
 VLIBPROC void mem_zero(void *data, size_t len);
+/* compare str1 and str2. result = str1 - str2 */
 VLIBPROC int mem_compare(const void *str1, const void *str2, size_t count);
 #endif
+/* zero out a struct (will fill in padding bytes too) */
 #define ZeroStruct(S) mem_zero(&(S), sizeof(S))
 
 ////////////////////////////////
@@ -424,33 +482,95 @@ typedef struct {
 #endif
 
 #ifndef VL_INC_STRING_H
+/* returns the number of bytes of a string s until its first null ('\0') byte */
 size_t strlen(const char *s);
 #endif // VL_INC_STRING_H
 
+/* checks if the given character is a space */
 int is_space(int _c); // only checks ascii space characters
-VIEWPROC view ViewFromParts(const char *data, size_t count);
+
+/* returns a view pointing to the given data and with the given length */
+VIEWPROC view ViewFromParts(const char *data, size_t length);
+/* returns a view pointing to the given cstr and with the count given by strlen(cstr) */
 VIEWPROC view ViewFromCstr(const char *cstr);
-VIEWPROC view ViewSlice(view v, size_t start, size_t end); // won't include end -> [start, end)
-VIEWPROC int  ViewCompare(view a, view b); // result = A - B
+/* returns a slice of v from [start, end) */
+VIEWPROC view ViewSlice(view v, size_t start, size_t end);
+/* compares two views, same result as strcmp(a, b). Returns a - b */
+VIEWPROC int  ViewCompare(view a, view b);
+/* compares two views for equality */
 VIEWPROC bool ViewEq(view a, view b);
+/* checks if 'v' starts with 'start' */
 VIEWPROC bool ViewStartsWith(view v, view start);
-// Chops start from v when it gets found
+/* checks if 'v' starts with 'start' and removes 'start' from 'v' if it is true */
 VIEWPROC bool ViewChopStartsWith(view *v, view start);
-VIEWPROC const char *ViewFind(view haystack, view needle); // result = pointer to where the needle is in haystack or null
-// If the needle gets found, chop the haystack until the first ocurrence of needle in haystack
+/* finds the needle in the haystack. Returns pointer to where needle was found or null */
+VIEWPROC const char *ViewFind(view haystack, view needle);
+/* finds the needle in the haystack
+ * Returns:
+ * - If the needle was found
+ * - The part after the needle in haystack
+ * - The part before the needle in chopped (optional)
+ **/
 VIEWPROC bool ViewFindChop(view *haystack, view needle, view *chopped);
+/* finds a character c in a view v
+ * Returns:
+ * - If the character was found
+ * - The index of where the character was found in n (optional)
+ **/
 VIEWPROC bool ViewFindCharacter(view v, char c, size_t *n);
+/* finds a character c in a view v
+ * Returns:
+ * - If the character was found
+ * - The part after the character in v
+ * - The part before the character in chopped (optional)
+ **/
 VIEWPROC bool ViewFindChopCharacter(view *v, char c, view *chopped);
-#define ViewEndWith ViewEndsWith /* in case of singular/plural annoyance */
+/* checks if 'v' ends with 'end' */
 VIEWPROC bool ViewEndsWith(view v, view end);
+/* chops view v by delimiter delim
+ * Returns:
+ * - The part before delim
+ * - The part after delim in v
+ **/
 VIEWPROC view ViewChopByDelim(view *v, char delim);
-VIEWPROC view ViewChopByLine(view *v); // '\n' or "\r\n"
-VIEWPROC view ViewChopByAnyDelim(view *v, view delims, char *delimiter); // checks for any character in Delims, stores found delimiter in Delimiter
-VIEWPROC view ViewChopByView(view *v, view delim); // full view is the delim
+/* chops view v by a line
+ * Returns:
+ * - The part before the first newline
+ * - The part after the first newline in v
+ * Checks for '\n' or "\r\n"
+ **/
+VIEWPROC view ViewChopByLine(view *v);
+/* chops view v by any character in delims
+ * Returns:
+ * - The part before delim
+ * - The part after delim in v
+ * - The delim that was found from delims in delimiter (optional)
+ **/
+VIEWPROC view ViewChopByAnyDelim(view *v, view delims, char *delimiter);
+/* chops view v by delimiter delim
+ * Returns:
+ * - The part before delim
+ * - The part after delim in v
+ * The full view is the delimiter
+ **/
+VIEWPROC view ViewChopByView(view *v, view delim);
+/* chops n bytes from view v from the start
+ * Returns:
+ * - The starting n bytes of v as a view
+ * - The remaining view after chopping in v
+ **/
 VIEWPROC view ViewChopLeft(view *v, size_t n);
+/* chops n bytes from view v from the end
+ * Returns:
+ * - The starting (v->count - n) bytes of v as a view
+ * - The remaining view after chopping in v
+ **/
 VIEWPROC view ViewChopRight(view *v, size_t n);
+/* returns a left trimmed view v */
 VIEWPROC view ViewTrimLeft(view v);
+/* returns a right trimmed view v */
 VIEWPROC view ViewTrimRight(view v);
+/* returns a trimmed view v */
 VIEWPROC view ViewTrim(view v);
 
 #define ViewIterateLines(src, idxName, lineName) \
@@ -503,7 +623,7 @@ typedef struct {
 } memory_arena;
 
 typedef struct {
-    memory_arena *Arena;
+    memory_arena *arena;
     size_t startMemOffset;
 } scratch_arena;
 
@@ -570,8 +690,63 @@ ARENAPROC void ArenaRejoinMultiple_Impl(memory_arena *Arena, memory_arena **Spli
 # define temp_strndup(s, n) Arena_strndup(&ArenaTemp, s, n)
 # define temp_save() ArenaTemp.used
 # define temp_rewind(checkpoint) ArenaTemp.used = checkpoint;
-
 #endif
+
+////////////////////////////////
+// Exponential array (xar). See: https://azmr.uk/bsc25/
+
+/*
+ * Be minimally careful with the size of an exp_array, as e.g. 18 ptrs means 160Bytes, 30 ptrs means 256Bytes
+ * This is definitely not huge but you also can't just have an unbounded amount of them
+ * This is just a suggestion, this will be almost 128M items with shift = 8 (you might also want a greater shift instead)
+ *
+ * This is the partial sum formula in case you want to calculate the max amount of items:
+ * Sum[0..n](2^(x + k)) = 2^k * (-1 + 2^(1 + n))
+ * with x being the number that goes from 0 to n
+ *      k being the initial shift for the exp_array
+ *      n being the maximum chunk count
+ */
+#define VICLIB_EXP_ARRAY_CHUNK_COUNT 18
+/* This is a suggestion.
+ * I usually use this shift to avoid doing a bunch of allocations at the start
+ * and because I use Exponential arrays for huge lists
+ */
+#define VICLIB_EXP_ARRAY_CHUNK_SHIFT 8
+
+typedef struct {
+  uint8_t  shift;
+  uint8_t  chunkCount;
+  // I might add something useful here...
+  uint16_t reserved;
+  uint32_t elementSize;
+} exp_array_meta;
+
+typedef struct {
+  size_t n;
+} exp_array_hdr;
+
+#define exp_array(type, chunkCount) \
+  struct { \
+    exp_array_meta meta; \
+    exp_array_hdr hdr; \
+    type *chunks[chunkCount]; \
+  }
+
+#define ExpArrayDef(type, chunkCount, name) typedef exp_array(type, chunkCount) name
+
+#define ExpArrayInit(exp, Shift) \
+  do { \
+    StaticAssert((Shift) > 1 && (Shift) < 20, "shift should be at least 1 and at most 20 (it doesn't make sense to make it more)"); \
+    (exp).meta.shift = (Shift); \
+    (exp).meta.chunkCount = ArrayLen((exp).chunks); \
+    (exp).meta.elementSize = sizeof((exp).chunks[0][0]); \
+  } while(0)
+
+#define ExpArrayGet(exp, idx) ExpArrayGet_Generic(&(exp)->hdr, (exp)->meta, idx)
+VLIBPROC void *ExpArrayGet_Generic(exp_array_hdr const *xar, exp_array_meta meta, size_t idx);
+
+#define ExpArrayAppend(arena, exp, item) ExpArrayAppend_Generic((arena), &(exp)->hdr, (exp)->meta, &(item))
+VLIBPROC void *ExpArrayAppend_Generic(memory_arena *arena, exp_array_hdr *xar, exp_array_meta meta, void *data);
 
 ////////////////////////////////
 
@@ -618,6 +793,24 @@ VLIBPROC bool VL_FileExists(const char *path);
 #if !OS_WINDOWS
 bool IsDebuggerPresent(void);
 #endif
+
+/* Open file for reading */
+VLIBPROC vl_fd VL_FopenForRead(const char *path);
+
+/* Open file for writing
+ * '/dev/null' on windows will be automatically changed to 'NUL' and vice versa */
+VLIBPROC vl_fd VL_FopenForWrite(const char *path);
+
+/* Close file handle */
+VLIBPROC void VL_FileClose(vl_fd fd);
+
+// TODO: Detect EOF
+/* Read maximum bytesSize from fd file, returns the amount of bytes read in bytesRead */
+VLIBPROC bool VL_FileRead(vl_fd fd, void *bytes, uint32_t bytesSize, uint32_t *bytesRead);
+
+// TODO: Errors on these
+VLIBPROC bool VL_Pipe(vl_fd *fdRead, vl_fd *fdWrite);
+VLIBPROC bool VL_PipeHasData(vl_fd read, bool *hasData);
 
 typedef enum {
     VL_FILE_INVALID = -1,
@@ -692,11 +885,11 @@ size_t strlen(const char *s)
 }
 #endif // strlen
 
-VIEWPROC view ViewFromParts(const char *data, size_t count)
+VIEWPROC view ViewFromParts(const char *data, size_t length)
 {
     view v;
     v.items = data;
-    v.count = count;
+    v.count = length;
     return v;
 }
 
@@ -1288,7 +1481,7 @@ VLIBPROC int mem_compare(const void *str1, const void *str2, size_t count)
 
     for(;count-- > 0;) {
         if(*s1++ != *s2++)
-            return s1[-1] < s2[-1] ? -1 : 1;
+            return s1[-1] - s2[-1];
     }
     return 0;
 }
@@ -1405,7 +1598,7 @@ ARENAPROC void ArenaRejoinMultiple_Impl(memory_arena *Arena, memory_arena **Spli
 ARENAPROC scratch_arena ArenaBeginScratch(memory_arena *Arena)
 {
     scratch_arena scratch = {
-        .Arena = Arena,
+        .arena = Arena,
         .startMemOffset = Arena->used,
     };
     Arena->scratchCount += 1;
@@ -1415,7 +1608,7 @@ ARENAPROC scratch_arena ArenaBeginScratch(memory_arena *Arena)
 
 ARENAPROC void ArenaEndScratch(scratch_arena Scratch, bool ZeroMem)
 {
-    memory_arena *Arena = Scratch.Arena;
+    memory_arena *Arena = Scratch.arena;
     Assert(Arena->used >= Scratch.startMemOffset);
     if(ZeroMem) {
         mem_zero(Arena->base + Scratch.startMemOffset, Arena->used - Scratch.startMemOffset);
@@ -1423,6 +1616,54 @@ ARENAPROC void ArenaEndScratch(scratch_arena Scratch, bool ZeroMem)
     Arena->used = Scratch.startMemOffset;
     Assert(Arena->scratchCount > 0);
     Arena->scratchCount -= 1;
+}
+
+////////////////////////////////
+
+VLIBPROC void *ExpArrayGet_Generic(exp_array_hdr const *xar, exp_array_meta meta, size_t idx)
+{
+    uint8_t **chunks = (uint8_t**)(xar+1);
+
+    size_t chunkIdx = idx;
+    size_t chunkCapacity = 1ULL << meta.shift;
+    uint8_t chunksIdx = 0;
+
+    size_t idxShift = idx >> meta.shift;
+    if(idxShift > 0) {
+        chunksIdx = (uint8_t)CountLeadingZerosU64(idxShift);
+        chunkCapacity = 1ULL << (chunksIdx + meta.shift);
+        chunkIdx -= chunkCapacity;
+        chunksIdx += 1;
+    }
+
+    return chunks[chunksIdx] + chunkIdx * meta.elementSize;
+}
+
+VLIBPROC void *ExpArrayAppend_Generic(memory_arena *arena, exp_array_hdr *xar, exp_array_meta meta, void *data)
+{
+    uint8_t **chunks = (uint8_t**)(xar+1);
+
+    size_t chunkIdx = xar->n;
+    size_t chunkCapacity = 1ULL << meta.shift;
+    uint8_t chunksIdx = 0;
+
+    size_t idxShift = xar->n >> meta.shift;
+    if(idxShift > 0) {
+        chunksIdx = (uint8_t)CountLeadingZerosU64(idxShift);
+        chunkCapacity = 1ULL << (chunksIdx + meta.shift);
+        chunkIdx -= chunkCapacity;
+        chunksIdx += 1;
+    }
+
+    if(chunks[chunksIdx] == 0) {
+        chunks[chunksIdx] = ArenaPushSize(arena, chunkCapacity * meta.elementSize);
+    }
+
+    xar->n++;
+
+    void *result = chunks[chunksIdx] + chunkIdx * meta.elementSize;
+    mem_copy_non_overlapping(result, data, meta.elementSize);
+    return result;
 }
 
 ////////////////////////////////
@@ -1484,6 +1725,218 @@ VLIBPROC bool VL_FileExists(const char *path)
 #endif
 }
 
+VLIBPROC vl_fd VL_FopenForRead(const char *path)
+{
+#if !OS_WINDOWS
+    vl_fd result = open(path, O_RDONLY);
+    if(result < 0) {
+        // VL_Log(VL_ERROR, "Could not open file %s: %s", path, strerror(errno));
+        return VL_INVALID_FD;
+    }
+    return result;
+#else
+    // https://docs.microsoft.com/en-us/windows/win32/fileio/opening-a-file-for-reading-or-writing
+    SECURITY_ATTRIBUTES saAttr = {0};
+    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    saAttr.bInheritHandle = TRUE;
+
+    vl_fd result = CreateFile(
+                    path,
+                    GENERIC_READ,
+                    0,
+                    &saAttr,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_READONLY,
+                    NULL);
+
+    if(result == INVALID_HANDLE_VALUE) {
+        // VL_Log(VL_ERROR, "Could not open file %s: %s", path, Win32_ErrorMessage(GetLastError()));
+        return VL_INVALID_FD;
+    }
+
+    return result;
+#endif // _WIN32
+}
+
+VLIBPROC vl_fd VL_FopenForWrite(const char *path)
+{
+#if !OS_WINDOWS
+    if(ViewEq(ViewFromCstr(path), VIEW("NUL"))) path = "/dev/null";
+    vl_fd result = open(path,
+                     O_WRONLY | O_CREAT | O_TRUNC,
+                     S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if(result < 0) {
+        // VL_Log(VL_ERROR, "Could not open file %s: %s", path, strerror(errno));
+        return VL_INVALID_FD;
+    }
+    return result;
+#else
+    if(ViewEq(ViewFromCstr(path), VIEW("/dev/null"))) path = "NUL";
+
+    SECURITY_ATTRIBUTES saAttr = {0};
+    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    saAttr.bInheritHandle = TRUE;
+
+    vl_fd result = CreateFile(
+                    path,                            // name of the write
+                    GENERIC_WRITE,                   // open for writing
+                    0,                               // do not share
+                    &saAttr,                         // default security
+                    CREATE_ALWAYS,                   // create always
+                    FILE_ATTRIBUTE_NORMAL,           // normal file
+                    NULL                             // no attr. template
+                );
+
+    if(result == INVALID_HANDLE_VALUE) {
+        // VL_Log(VL_ERROR, "Could not open file %s: %s", path, Win32_ErrorMessage(GetLastError()));
+        return VL_INVALID_FD;
+    }
+
+    return result;
+#endif // _WIN32
+}
+
+VLIBPROC void VL_FileClose(vl_fd fd)
+{
+#if OS_WINDOWS
+    CloseHandle(fd);
+#else
+    close(fd);
+#endif // _WIN32
+}
+
+VLIBPROC bool VL_FileRead(vl_fd fd, void *bytes, uint32_t bytesSize, uint32_t *bytesRead)
+{
+    if(!bytesRead || bytesSize == 0) {
+      return false;
+    }
+
+#if OS_WINDOWS
+    uint32_t toRead = min(bytesSize, WIN32_MAX_FILE_READ_WRITE);
+    long unsigned int readBytes;
+    if(ReadFile(fd, bytes, toRead, &readBytes, 0)) {
+        *bytesRead = (uint32_t)readBytes;
+        if(readBytes == 0) {
+          return false;
+        }
+    } else {
+        *bytesRead = 0;
+        return false;
+    }
+    return true;
+
+#elif OS_LINUX || OS_MAC
+    size_t toRead = min((size_t)bytesSize, LINUX_MAX_FILE_READ_WRITE);
+    ssize_t signedBytesRead = read(fd, bytes, toRead);
+    *bytesRead = (uint32_t)signedBytesRead;
+    return signedBytesRead > 0;
+#else
+    // unimplemented
+    return false;
+#endif
+}
+
+VLIBPROC bool VL_Pipe(vl_fd *fdRead, vl_fd *fdWrite)
+{
+    Assert(fdRead != 0);
+    Assert(fdWrite != 0);
+
+#if OS_WINDOWS
+    SECURITY_ATTRIBUTES securityAttrs = {
+        .nLength = sizeof(SECURITY_ATTRIBUTES),
+        .bInheritHandle = true,
+    };
+    return SUCCEEDED(CreatePipe(fdRead, fdWrite, &securityAttrs, 0));
+
+#elif OS_LINUX
+    vl_fd descs[2];
+    int status = pipe2(descs, O_CLOEXEC);
+    if(status == 0) {
+        *fdRead = descs[0];
+        *fdWrite = descs[1];
+    }
+    return status == 0;
+#else
+    // unimplemented...
+    return false;
+#endif
+}
+
+VLIBPROC bool VL_PipeHasData(vl_fd read, bool *hasData)
+{
+  if(!read || !hasData) {
+    return false;
+  }
+
+#if OS_WINDOWS
+  long unsigned int bytes;
+  if(!SUCCEEDED(PeekNamedPipe(read, 0, 0, 0, &bytes, 0))) {
+    *hasData = false;
+    return false;
+  }
+  *hasData = bytes > 0;
+  return true;
+#elif OS_LINUX
+  *hasData = false;
+
+  struct pollfd pollfd = {
+    .fd = read,
+    /* POLLIN = data to read, POLLHUP = closed connection */
+    .events = POLLIN | POLLHUP,
+  };
+  struct timespec timeoutTime = {
+    .tv_sec = 0,
+    .tv_nsec = 0,
+  };
+  int status = ppoll(&pollfd, 1, &timeoutTime, 0);
+  if(status == -1) {
+    // failed
+    return false;
+  }
+  if(status != 1) {
+    // Nothing available but didn't fail
+    return true;
+  }
+
+  if(pollfd.revents & POLLIN) {
+    *hasData = true;
+    return true;
+  } else if(pollfd.events & POLLHUP) {
+    // broken pipe
+    return false;
+  }
+  // unknown event
+  return false;
+#elif OS_MAC
+  struct pollfd pollfd = {
+    .fd = read,
+    /* POLLIN = data to read, POLLHUP = closed connection */
+    .events = POLLIN | POLLHUP,
+  };
+  int status = poll(&pollfd, 1, 0);
+  if(status == -1) {
+    // failed
+    return false;
+  }
+  if(status != 1) {
+    // Nothing available
+    return false;
+  }
+
+  if(pollfd.revents & POLLIN) {
+    return true;
+  } else if(pollfd.events & POLLHUP) {
+    // broken pipe
+    return false;
+  }
+  // unknown event
+  return false;
+#else
+  // unimplemented
+  return false;
+#endif
+}
+
 #if !OS_WINDOWS
 #include <string.h> /* strstr */
 #include <ctype.h>
@@ -1503,15 +1956,16 @@ bool IsDebuggerPresent(void)
 
     buf[num_read] = '\0';
     char tracerPidString[] = "TracerPid:";
-    const char *tracer_pid_ptr = strstr(buf, tracerPidString); // TODO: use ViewContains (when it is better)
+    const char *tracer_pid_ptr = strstr(buf, tracerPidString); // TODO: use ViewFind (when it is better)
     if (!tracer_pid_ptr)
         return false;
     
     for(const char* characterPtr = tracer_pid_ptr + sizeof(tracerPidString) - 1; characterPtr <= buf + num_read; ++characterPtr) {
-        if (isspace(*characterPtr))
+        if (is_space(*characterPtr))
             continue;
         else
-            return isdigit(*characterPtr) != 0 && *characterPtr != '0';
+            // Do not include '0'
+            return *characterPtr > '0' && *characterPtr <= '9';
     }
 
     return false;
@@ -1736,7 +2190,7 @@ bool ReadFileChunk(vl_file_chunk *Chunk, const char *File, u32 *ChunkSize)
         return false;
     }
 
-#elif OS_LINUX || OS_LINUX
+#elif OS_LINUX || OS_MAC
     if(!Chunk->didFirstIteration) {
         Chunk->didFirstIteration = true;
         Chunk->fd = open(File, O_RDONLY);
